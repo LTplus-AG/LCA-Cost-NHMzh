@@ -1,24 +1,26 @@
 # NHMzh Übersicht Module Kosten & LCA mit Docker
 
+![Demo Web App zeigt Funktionsweise der Module als Mock Up](assets/Demo_webApp.gif)
+
 > **Hinweis**: Für detaillierte Informationen zu den einzelnen Modulen, bitte die [README.md im modules Verzeichnis](modules/README.md) beachten.
 
 > **Hinweis**: Für detaillierte Informationen zur Verwendung der Skripte, siehe die [README.md im scripts Verzeichnis](scripts/README.md).
 
 ## Verzeichnisstruktur
 
-[**NHMzh-modules/data/**](data/): Enthält Eingabedaten und generierte Ausgabedateien.
+**NHMzh-modules/data/**: Enthält Eingabedaten und generierte Ausgabedateien.
 
-- [**NHMzh-modules/data/input/**](data/input/): Rohdaten
-  - [`control_file.xlsx`](data/input/control_file.xlsx)
-  - [`KBOB.csv`](data/input/KBOB.csv)
-  - [`CostDB.csv`](data/input/CostDB.csv)
-  - [`amortization_periods.csv`](data/input/amortization_periods.csv)
-- [**NHMzh-modules/data/output/**](data/output/): Generierte Ergebnisdaten
-  - [`lca_results.json`](data/output/lca_results.json)
-  - [`cost_results.json`](data/output/cost_results.json)
-  - [`combined_results.json`](data/output/combined_results.json)
-  - [`summary_report.txt`](data/output/summary_report.txt)
-- [**NHMzh-modules/data/output/qa/**](data/output/qa/): Kontrolldaten zur Überprüfung der Resultate etc.
+- **NHMzh-modules/data/input/**: Rohdaten
+  - `control_file.xlsx`
+  - `KBOB.csv`
+  - `CostDB.csv`
+  - `amortization_periods.csv`
+- **NHMzh-modules/data/output/**: Generierte Ergebnisdaten
+  - `lca_results.json`
+  - `cost_results.json`
+  - `combined_results.json`
+  - `summary_report.txt`
+- **NHMzh-modules/data/output/qa/**: Kontrolldaten zur Überprüfung der Resultate etc.
 
 [**NHMzh-modules/modules/**](modules/): Spezifische Module zur Ausführung von Berechnungen.
 
