@@ -1,7 +1,7 @@
 # NHMzh Übersicht Module Kosten & LCA mit Docker
 
 ![Demo Web App zeigt Funktionsweise der Module als Mock Up](assets/Demo_webApp.gif)
-_Hinweis: Dies ist ein Mock-Up aus der frühen Projektphase und stellt nicht das endgültige Ergebnis dar._
+_Mock-Up aus früher Projektphase, stellt nicht das endgültige Ergebnis dar._
 
 > **Hinweis**: Für detaillierte Informationen zu den einzelnen Modulen, bitte die [README.md im modules Verzeichnis](modules/README.md) beachten.
 
