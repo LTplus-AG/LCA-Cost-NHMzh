@@ -1,3 +1,8 @@
 pandas
 openpyxl
 joblib
+minio
+python-dotenv
+pydantic
+duckdb
+pyarrow
