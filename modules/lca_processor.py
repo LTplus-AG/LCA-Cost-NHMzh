@@ -10,14 +10,17 @@ from utils.shared_utils import load_data, validate_columns, validate_value, ensu
 
 
 class LCAProcessor(BaseProcessor):
-    def __init__(self, input_file_path, data_file_path, output_file, life_expectancy_file_path):
-        super().__init__(input_file_path, data_file_path, output_file)
+    def __init__(self, input_file_path, data_file_path, output_file, 
+                 life_expectancy_file_path, material_mappings_file, minio_config=None):
+        super().__init__(input_file_path, data_file_path, output_file, minio_config)
         self.life_expectancy_file_path = life_expectancy_file_path
+        self.material_mappings_file = material_mappings_file
 
     def load_data(self):
         self.element_data = load_data(self.input_file_path)
         self.data = load_data(self.data_file_path, encoding="ISO-8859-1")
         self.life_expectancy_data = self.load_life_expectancy_data()
+        self.material_mappings = load_data(self.material_mappings_file)
         self.validate_data()
 
     def load_life_expectancy_data(self) -> pd.DataFrame:
@@ -25,14 +28,52 @@ class LCAProcessor(BaseProcessor):
         return load_data(self.life_expectancy_file_path)
 
     def validate_data(self) -> None:
-        """Validate that the required columns are present in the element data."""
-        required_columns = [
-            "GUID",
-            "Volume",
-            "KBOB UUID-Nummer",
-            "eBKP-H",
+        """Validate that the required fields are present in the element data."""
+        # For KBOB data (DataFrame)
+        kbob_required_columns = [
+            "UUID-Nummer",
+            "Treibhausgasemissionen, Total [kg CO2-eq]",
+            "Primaerenergie nicht erneuerbar, Total [kWh oil-eq]",
+            "UBP (Total)",
         ]
-        validate_columns(self.element_data, required_columns)
+        validate_columns(self.data, kbob_required_columns)
+        
+        # For element data (JSON)
+        if not isinstance(self.element_data, dict) or "elements" not in self.element_data:
+            raise ValueError("Input data must be a dictionary with 'elements' key")
+        
+        # Check each element has required structure
+        for element in self.element_data["elements"]:
+            required_fields = ["id", "materials", "material_volumes", "properties"]
+            missing_fields = [field for field in required_fields if field not in element]
+            if missing_fields:
+                raise ValueError(f"Element missing required fields: {', '.join(missing_fields)}")
+            
+            # Check properties
+            if "ebkp" not in element["properties"]:
+                raise ValueError(f"Element {element['id']} missing ebkp in properties")
+            
+            # Check material volumes
+            for material in element["materials"]:
+                if material not in element["material_volumes"]:
+                    raise ValueError(f"Element {element['id']} missing volume data for material {material}")
+                
+                volume_data = element["material_volumes"][material]
+                if "volume" not in volume_data or "fraction" not in volume_data:
+                    raise ValueError(f"Element {element['id']} material {material} missing volume or fraction")
+        
+        # For life expectancy data (DataFrame)
+        life_expectancy_required_columns = [
+            "eBKP-H Code",
+            "Life Expectancy (years)"
+        ]
+        validate_columns(self.life_expectancy_data, life_expectancy_required_columns)
+
+    def get_density_from_kbob(self, kbob_uuid: str) -> float:
+        """Get material density from KBOB data."""
+        if kbob_uuid and kbob_uuid in self.data.index:
+            return self.data.loc[kbob_uuid, "density"]
+        return None
 
     def prepare_kbob_data(self) -> pd.DataFrame:
         """Prepare the KBOB data for merging with element data."""
@@ -43,8 +84,8 @@ class LCAProcessor(BaseProcessor):
                 "Treibhausgasemissionen, Total [kg CO2-eq]",
                 "Primaerenergie nicht erneuerbar, Total [kWh oil-eq]",
                 "UBP (Total)",
-                "Rohdichte/ Flaechenmasse",
                 "BAUMATERIALIEN",
+                "Rohdichte/ Flaechenmasse",
             ]
         ].rename(
             columns={
@@ -76,161 +117,136 @@ class LCAProcessor(BaseProcessor):
         kbob_data_df["density"].fillna(0, inplace=True)
         
         # Log a warning for any rows where we used the default density
-        default_density_rows = kbob_data_df[kbob_data_df["density"] == 1.0].index
+        default_density_rows = kbob_data_df[kbob_data_df["density"] == 0].index
         if not default_density_rows.empty:
             logging.warning(f"Used no density (0) for the following UUID-Nummer: {', '.join(default_density_rows)}")
         
         return kbob_data_df
 
-    def get_life_expectancy(self, ebkp_h: str) -> float:
-        """Get life expectancy for a given eBKP-H code, handling partial matches."""
-        if pd.isna(ebkp_h):
-            logging.warning(f"eBKP-H code is missing (NaN).")
+    def get_life_expectancy(self, ebkp_code: str) -> int:
+        """Get life expectancy for a given eBKP-H code."""
+        if not ebkp_code:
             return None
-        ebkp_h = str(ebkp_h).strip()
-        for code, years in zip(self.life_expectancy_data["eBKP-H Code"], self.life_expectancy_data["Years"]):
-            if ebkp_h.startswith(code):
-                return years
-        logging.warning(f"No life expectancy found for eBKP-H code: {ebkp_h}")
+        
+        ebkp_code = str(ebkp_code).strip()
+        for code, years in zip(
+            self.life_expectancy_data["eBKP-H Code"], 
+            self.life_expectancy_data["Life Expectancy (years)"]
+        ):
+            if str(code).strip() == ebkp_code:
+                return int(years)
         return None
 
     def process_data(self) -> None:
-        """Process the element data and compute LCA metrics, including per-year calculations."""
+        """Process the element data and compute LCA metrics."""
         kbob_data_df = self.prepare_kbob_data()
 
-        # Ensure KBOB UUID-Nummer is a string and strip whitespace
-        self.element_data["KBOB UUID-Nummer"] = self.element_data["KBOB UUID-Nummer"].astype(str).str.strip()
-
-        # Ensure 'eBKP-H' is a string and strip whitespace
-        self.element_data['eBKP-H'] = self.element_data['eBKP-H'].astype(str).str.strip()
-
-        # Merge element data with KBOB data
-        merged_data = pd.merge(
-            self.element_data,
-            kbob_data_df,
-            left_on="KBOB UUID-Nummer",
-            right_index=True,
-            how="left",
-            indicator=True,
-        )
-
-        # Handle missing material properties
-        missing_materials = merged_data["_merge"] == "left_only"
-        if missing_materials.any():
-            missing_uuids = merged_data.loc[missing_materials, "KBOB UUID-Nummer"].unique()
-            for uuid in missing_uuids:
-                logging.warning(f"KBOB UUID '{uuid}' not found in KBOB data.")
-
-        # Validate volume
-        merged_data["volume_error"] = merged_data.apply(
-            lambda row: validate_value(
-                row["Volume"], "volume", row["GUID"], row["eBKP-H"]
-            ),
-            axis=1,
-        )
-
-        # Validate density (from KBOB data)
-        merged_data["density_error"] = merged_data.apply(
-            lambda row: validate_value(
-                row["density"], "density", row["GUID"], row["eBKP-H"]
-            ),
-            axis=1,
-        )
-
-        # Combine errors
-        merged_data["error"] = merged_data["volume_error"].combine_first(
-            merged_data["density_error"]
-        )
-        merged_data["failed"] = merged_data["error"].notna()
-
-        # Calculate LCA metrics for valid data
-        valid_data = merged_data[
-            ~merged_data["failed"] & (merged_data["_merge"] == "both")
-        ].copy()
-
-        # Map life expectancy to each building element based on eBKP-H code
-        valid_data["life_expectancy"] = valid_data["eBKP-H"].apply(self.get_life_expectancy)
-
-        # Calculate total and per year values for LCA indicators
-        valid_data["co2_emission"] = (
-            valid_data["density"]
-            * valid_data["Volume"]
-            * valid_data["indicator_co2eq"]
-        )
-        valid_data["co2_emission_per_year"] = valid_data["co2_emission"] / valid_data["life_expectancy"]
-
-        valid_data["primary_energy"] = (
-            valid_data["density"]
-            * valid_data["Volume"]
-            * valid_data["indicator_penre"]
-        )
-        valid_data["primary_energy_per_year"] = valid_data["primary_energy"] / valid_data["life_expectancy"]
-
-        valid_data["ubp"] = (
-            valid_data["density"]
-            * valid_data["Volume"]
-            * valid_data["indicator_ubp"]
-        )
-        valid_data["ubp_per_year"] = valid_data["ubp"] / valid_data["life_expectancy"]
-
-        # Prepare components for valid data
-        components_valid = valid_data.apply(
-            lambda row: {
-                "guid": row["GUID"],
-                "kbob_uuid": row["KBOB UUID-Nummer"],
-                "kbob_name": row["BAUMATERIALIEN"],
-                "density": round(row["density"], 3),
-                "amortization": round(row["life_expectancy"], 3) if pd.notnull(row["life_expectancy"]) else None,
-                "co2_eq": round(row["co2_emission"], 3),
-                "co2_eq_per_year": round(row["co2_emission_per_year"], 3),
-                "penre": round(row["primary_energy"], 3),
-                "penre_per_year": round(row["primary_energy_per_year"], 3),
-                "ubp": round(row["ubp"], 0),
-                "ubp_per_year": round(row["ubp_per_year"], 0),
-                "failed": False,
-            },
-            axis=1,
-        ).tolist()
-
-        # Prepare components for failed data
-        failed_data = merged_data[
-            merged_data["failed"] | (merged_data["_merge"] == "left_only")
-        ].copy()
-        failed_data["error"] = failed_data.apply(
-            lambda row: row["error"]
-            if pd.notna(row["error"])
-            else f"KBOB UUID '{row['KBOB UUID-Nummer']}' not found",
-            axis=1,
-        )
-
-        components_failed = failed_data.apply(
-            lambda row: {
-                "guid": row["GUID"],
-                "ebkp_h": row["eBKP-H"],
-                "failed": True,
-                "error": row["error"],
-            },
-            axis=1,
-        ).tolist()
-
-        # Combine components
-        all_components = components_valid + components_failed
-
-        # Group components by GUID
-        components_by_guid: Dict[Any, List[Dict[str, Any]]] = {}
-        for comp in all_components:
-            guid = comp["guid"]
-            components_by_guid.setdefault(guid, []).append(comp)
-
-        # Build the results list
-        self.results = [
-            {
-                "guid": guid,
-                "components": comps,
-                "shared_guid": len(comps) > 1,
+        # Load material mappings
+        material_mappings = {
+            item["ifc_material"]: item["kbob_id"]
+            for item in self.material_mappings
+            if item.get("kbob_id")
+        }
+        
+        results = []
+        for element in self.element_data["elements"]:
+            element_result = {
+                "guid": element["id"],
+                "components": []
             }
-            for guid, comps in components_by_guid.items()
-        ]
+            
+            for material_name in element["materials"]:
+                material_data = element["material_volumes"].get(material_name)
+                if not material_data:
+                    element_result["components"].append({
+                        "guid": element["id"],
+                        "material": material_name,
+                        "failed": True,
+                        "error": f"Missing volume data for material: {material_name}"
+                    })
+                    continue
+                
+                # Get volume and density from material_data
+                volume = material_data.get("volume", 0) * material_data.get("fraction", 1.0)
+                density = material_data.get("density", 0)
+                
+                if volume <= 0:
+                    element_result["components"].append({
+                        "guid": element["id"],
+                        "material": material_name,
+                        "failed": True,
+                        "error": f"Invalid volume: {volume}"
+                    })
+                    continue
+                
+                if density <= 0:
+                    element_result["components"].append({
+                        "guid": element["id"],
+                        "material": material_name,
+                        "failed": True,
+                        "error": f"Invalid density: {density}"
+                    })
+                    continue
+                
+                # Get KBOB ID from material mappings
+                kbob_id = material_mappings.get(material_name)
+                if not kbob_id:
+                    element_result["components"].append({
+                        "guid": element["id"],
+                        "material": material_name,
+                        "failed": True,
+                        "error": f"Material mapping not found: {material_name}"
+                    })
+                    continue
+                
+                if kbob_id not in kbob_data_df.index:
+                    element_result["components"].append({
+                        "guid": element["id"],
+                        "material": material_name,
+                        "mat_kbob": kbob_id,
+                        "failed": True,
+                        "error": f"KBOB ID not found: {kbob_id}"
+                    })
+                    continue
+                
+                kbob_row = kbob_data_df.loc[kbob_id]
+                
+                # Get life expectancy and ebkp
+                ebkp = element.get("properties", {}).get("ebkp", "")
+                life_expectancy = self.get_life_expectancy(ebkp)
+                
+                if not life_expectancy:
+                    life_expectancy = 60  # Default value
+                
+                # Calculate impacts using density from material_data
+                co2_eq = volume * density * kbob_row["indicator_co2eq"]
+                penre = volume * density * kbob_row["indicator_penre"]
+                ubp = volume * density * kbob_row["indicator_ubp"]
+                
+                # Add component with metrics using standardized names
+                element_result["components"].append({
+                    "guid": element["id"],
+                    "material": material_name,
+                    "mat_kbob": kbob_id,
+                    "kbob_material_name": kbob_row["BAUMATERIALIEN"],
+                    "volume": round(volume, 3),
+                    "density": round(density, 3),
+                    "amortization": life_expectancy,
+                    "ebkp_h": ebkp,
+                    "gwp_absolute": round(co2_eq, 3),
+                    "gwp_relative": round(co2_eq / life_expectancy, 3),
+                    "penr_absolute": round(penre, 3),
+                    "penr_relative": round(penre / life_expectancy, 3),
+                    "ubp_absolute": round(ubp, 0),
+                    "ubp_relative": round(ubp / life_expectancy, 0),
+                    "failed": False
+                })
+            
+            # Add element to results
+            element_result["shared_guid"] = len(element_result["components"]) > 1
+            results.append(element_result)
+        
+        self.results = results
 
     def save_results(self):
         ensure_output_directory(os.path.dirname(self.output_file))

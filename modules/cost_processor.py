@@ -7,6 +7,9 @@ from modules.base_processor import BaseProcessor
 from utils.shared_utils import validate_columns, validate_value
 
 class CostProcessor(BaseProcessor):
+    def __init__(self, input_file_path, data_file_path, output_file, minio_config=None):
+        super().__init__(input_file_path, data_file_path, output_file, minio_config)
+    
     def load_data(self):
         super().load_data()
     

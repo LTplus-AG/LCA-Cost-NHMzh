@@ -2,6 +2,7 @@ import sys
 import os
 import logging
 import json
+from dotenv import load_dotenv
 
 # Add the parent directory to sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))  # Path to 'scripts/'
@@ -30,6 +31,21 @@ def combine_results(lca_results, cost_results):
 
     # Convert back to list
     return list(combined_results.values())
+
+def get_minio_config():
+    """Get MinIO configuration from environment variables"""
+    load_dotenv()
+    return {
+        'endpoint': os.getenv('MINIO_ENDPOINT'),
+        'access_key': os.getenv('MINIO_ACCESS_KEY'),
+        'secret_key': os.getenv('MINIO_SECRET_KEY'),
+        'bucket': os.getenv('MINIO_LCA_COST_DATA_BUCKET')
+    } if all([
+        os.getenv('MINIO_ENDPOINT'),
+        os.getenv('MINIO_ACCESS_KEY'),
+        os.getenv('MINIO_SECRET_KEY'),
+        os.getenv('MINIO_LCA_COST_DATA_BUCKET')
+    ]) else None
 
 def main():
     # Configure logging
@@ -76,6 +92,11 @@ def main():
 
     logging.info("Starting LCA and Cost modules...")
 
+    # Get MinIO config if available
+    minio_config = get_minio_config()
+    if minio_config:
+        logging.info("MinIO configuration found - results will be stored in MinIO")
+    
     try:
         # Run LCA Processor
         lca_processor = LCAProcessor(
@@ -83,13 +104,17 @@ def main():
             kbob_data_file_path,
             lca_output_file,
             life_expectancy_file_path,
+            minio_config=minio_config
         )
         lca_processor.run()
         logging.info("LCA module completed successfully.")
 
         # Run Cost Processor
         cost_processor = CostProcessor(
-            input_file_path, cost_data_file_path, cost_output_file
+            input_file_path, 
+            cost_data_file_path, 
+            cost_output_file,
+            minio_config=minio_config
         )
         cost_processor.run()
         logging.info("Cost module completed successfully.")
