@@ -1,80 +1,141 @@
 # NHMzh Module Kosten & LCA
 
-> **Hinweis**: Für eine Übersicht des gesamten Projekts, siehe die [Haupt-README.md](../README.md).
+> [!NOTE]
+> Für eine Übersicht des gesamten Projekts, siehe die [Haupt-README.md](../README.md).
 
-### `BaseProcessor`
+## 📦 Module
 
-ist eine abstrakte Basisklasse, die die gemeinsame Struktur für alle Module bereitstellt. Enthält insb.:
+### 🔧 BaseProcessor
+Abstrakte Basisklasse für die Modulstruktur. Stellt grundlegende Funktionen wie Dateiverarbeitung, Prozesssteuerung und Validierung bereit.
+* Einheitliche Initialisierung mit Ein-/Ausgabepfaden
+* Zentrale Prozesssteuerung via `run()`-Methode
+* Framework für Datenvalidierung und -verarbeitung
+* Integrierte Utilities aus `shared_utils`
 
-- Initialisierung mit Eingabedateipfad, Inputdaten-Dateipfad und Ausgabedateipfad
-- `run()`-Methode zur Steuerung des Prozessablaufs
-- Abstrakte Methoden zur Datenvalidierung und -verarbeitung in den Modulen
-- Methoden zum Laden von Daten und Speichern der Ergebnisse
-- Verwendung von `load_data()` und `save_data_to_json()` aus `utils.shared_utils`
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-### `LCAProcessor`
+#### ✨ Kernfunktionalitäten
+- **Initialisierung**
+  - Eingabedateipfad für Hauptdaten
+  - Inputdaten-Dateipfad für Referenzdaten
+  - Ausgabedateipfad für Ergebnisse
+- **Prozesssteuerung**
+  - `run()`-Methode für standardisierten Ablauf
+  - Abstrakte Methoden für modulspezifische Validierung
+  - Abstrakte Methoden für modulspezifische Verarbeitung
+- **Datenverwaltung** 
+  - Methoden zum strukturierten Laden von Daten
+  - Methoden zum standardisierten Speichern der Ergebnisse
+  - Integration von `utils.shared_utils` Funktionen
+</details>
 
-Berechnet der Ökobilanz (LCA) für Bauteile und Bauteilschichten.
+### 📊 LCAProcessor
+Berechnet Ökobilanzen für Bauteile und Schichten mit CO₂-Äquivalenten, Energieverbrauch und UBP. Umfassende Lebensdaueranalyse und KBOB-Integration.
+* KBOB-Umweltindikatoren Verarbeitung
+* Lebensdaueranalyse via eBKP-H
+* CO₂-eq, Primärenergie und UBP Berechnung
+* Detaillierte Ergebnisaufbereitung
+* Umfassendes Fehlerhandling
 
-- **Initialisierung und Datenverarbeitung**:
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-  - Lädt Elementdaten, KBOB-Daten (Umweltindikatoren) und Lebensdauerinformationen.
-  - Führt Datenvalidierung durch: Spaltenprüfung und Wertevalidierung.
+#### 🔄 Initialisierung und Datenverarbeitung
+- **Datenladen**
+  - Elementdaten aus Eingabedatei
+  - KBOB-Daten mit Umweltindikatoren
+  - Lebensdauerinformationen
+- **Validierung**
+  - Spaltenprüfung der Eingabedaten
+  - Wertevalidierung aller Parameter
 
-- **Lebensdauer**:
+#### ⏳ Lebensdauer
+- **Ermittlung**
+  - Basierend auf eBKP-H-Codes
+  - Berücksichtigung von Teilübereinstimmungen
+  - Protokollierung nicht zugeordneter Codes
 
-  - Methode zur Ermittlung der Lebensdauer basierend auf eBKP-H-Codes.
-  - Enthält Teilübereinstimmungen und protokolliert Warnungen für fehlende oder nicht zugeordnete Codes.
+#### 🧮 Berechnungen
+- **CO₂-Äquivalente**
+  - Gesamtemissionen in kg CO₂-eq
+  - Jährliche Emissionen
+  - Flächenbezogen in kg CO₂-eq/m²*a
+- **Energieverbrauch**
+  - Primärenergie in kWh (gesamt)
+  - Jährlicher Verbrauch
+- **UBP-Berechnung**
+  - Gesamte Umweltbelastungspunkte
+  - Jährliche UBP-Werte
 
-- **Berechnungen**:
+#### 📋 Ergebnisse
+- **Strukturierung**
+  - Detaillierte Ergebnisse je Bauteil
+  - GUID-basierte Gruppierung
+  - Fehlerinformationen
 
-  - Berechnet ökologische Auswirkungen durch Multiplikation von Menge und Indikator für:
-    - CO₂-eq resp. Treibhausgasemissionen (Gesamt und pro Jahr, d.h. in kg CO₂-eq resp. kg CO₂-eq / m² \* a)
-    - Primärenergieverbrauch in kWh (Gesamt und pro Jahr)
-    - UBP (Umweltbelastungspunkte, Gesamt und pro Jahr)
+#### ⚠️ Fehlerhandling
+- **Validierung**
+  - Datenprüfung und -validierung
+  - Warnungen für fehlende Daten
+  - Protokollierung von Berechnungsproblemen
+</details>
 
-- **Ergebnisgenerierung**:
+### 💰 CostProcessor
+Ermittelt Projektkosten basierend auf Bauteil-Kennwerten. Bietet automatische Mengenermittlung und umfassende Kostenanalyse mit Fehlerhandling.
+* Integration von Element- und Kostendaten
+* Automatische Einheiten-/Mengenermittlung
+* eBKP-H-basierte Kostenzuordnung
+* Strukturierte Ergebnisaufbereitung
+* Robustes Fehlerhandling
 
-  - Erstellt detaillierte Ergebnisse für gültige und fehlerhafte Daten.
-  - Gruppiert Bauteile nach GUID, behandelt Fälle mit gemeinsamen GUIDs.
-  - Erzeugt strukturierte Ergebnisliste mit Bauteiledetails und Fehlerinformationen.
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-- **Fehlerbehandlung und Protokollierung**:
+#### 🔄 Initialisierung und Datenverarbeitung
+- **Datenladen**
+  - Elementdaten aus Hauptdatei
+  - Kostenkennwerte aus Referenzdaten
+- **Datenaufbereitung**
+  - String-Konvertierung (eBKP-H, Code)
+  - Leerzeichenbereinigung
+  - Optimierte Indexierung der Kostenkennwerte
 
-  - Fehlerprüfung und -validierung, protokolliert Warnungen für fehlende Daten, nicht zugeordnete Codes und Berechnungsprobleme.
+#### 🔗 Datenzusammenführung
+- **Verknüpfung**
+  - Element-/Kostendaten via eBKP-H
+  - Identifikation fehlender Kennwerte
+  - Protokollierung von Zuordnungsproblemen
 
-### `CostProcessor`
+#### 📐 Mengenermittlung
+- **Berechnung**
+  - Flächenermittlung
+  - Längenermittlung
+  - Einheitenprüfung und -konvertierung
+- **Validierung**
+  - Prüfung der Referenzeinheiten
+  - Behandlung unbekannter Einheiten
+  - Fehlermarkierung bei Problemen
 
-Berechnet die prognostizierten Kosten für Bauprojekte.
+#### 🧮 Kostenberechnung
+- **Kalkulation**
+  - Menge × Einheitspreis
+  - Nur für validierte Datensätze
+  - Berücksichtigung von Einheitenkonversionen
 
-- **Initialisierung und Datenverarbeitung**:
+#### 📋 Ergebnisse
+- **Aufbereitung**
+  - Detaillierte Kostenaufstellung
+  - GUID-basierte Gruppierung
+  - Fehlerinformationen
 
-  - Lädt Elementdaten und Kostenkennwerte.
-  - Führt Datenvalidierung durch: Spaltenprüfung und Wertevalidierung.
-  - Konvertiert 'eBKP-H' und 'Code' Spalten in String-Format und entfernt Leerzeichen.
-  - Setzt 'Code' als Index für die Kostenkennwerte zur effizienten Verknüpfung.
-
-- **Datenzusammenführung**:
-
-  - Verbindet Element- und Kostenkennwerte basierend auf 'eBKP-H' Codes.
-  - Identifiziert und protokolliert fehlende Kostenkennwerte.
-
-- **Mengenermittlung**:
-
-  - Bestimmt die relevante Menge (Fläche, Länge) basierend auf der Referenzeinheit in den Kostenkennwerten.
-  - Behandelt unbekannte Einheitstypen und markiert entsprechende Datensätze als fehlerhaft.
-
-- **Kostenberechnung**:
-
-  - Berechnet Gesamtkosten durch Multiplikation von Menge und Einheitspreis für gültige Datensätze.
-
-- **Ergebnisgenerierung**:
-
-  - Erstellt detaillierte Ergebnisse für gültige und fehlerhafte Daten.
-  - Gruppiert Bauteile nach GUID, behandelt Fälle mit gemeinsamen GUIDs.
-  - Erzeugt strukturierte Ergebnisliste mit Bauteiledetails und Fehlerinformationen.
-
-- **Fehlerbehandlung und Protokollierung**:
-
-  - Implementiert Fehlerprüfung für Mengen und fehlende Kostenkennwerte.
-  - Protokolliert Warnungen für fehlende Kostenkennwerte und unbekannte Einheitstypen.
+#### ⚠️ Fehlerhandling
+- **Prüfung**
+  - Mengenvalidierung
+  - Kostenkennwert-Check
+  - Einheitenkompatibilität
+- **Protokollierung**
+  - Fehlende/ungültige Kennwerte
+  - Einheitenprobleme
+  - Berechnungsfehler
+</details>

@@ -1,59 +1,139 @@
 # NHMzh Scripts
 
-> **Hinweis**: Für eine Übersicht des gesamten Projekts, siehe die [Haupt-README.md](../README.md).
+> [!NOTE]
+> Für eine Übersicht des gesamten Projekts, siehe die [Haupt-README.md](../README.md).
 
-Dieses Verzeichnis enthält verschiedene Skripte zur Ausführung, Analyse und Unterstützung der NHMzh-Module.
+## 🛠️ Skript-Sammlung
 
-## Skripte
+### ⚡ `run_processors.py`
+Hauptskript für LCA- und Kostenberechnungen. Verarbeitet Eingabedaten und generiert kombinierte Analyseergebnisse.
+* Zentrale Steuerung der Berechnungsmodule
+* Integrierte Datenverarbeitung
+* Ergebniskombination und -speicherung
+* Robuste Fehlerbehandlung
 
-### [`run_processors.py`](run_processors.py)
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-Hauptskript zur Ausführung der LCA- und Kostenberechnungen.
+#### 📋 Hauptfunktionen
+- Lädt und validiert Eingabedaten
+- Steuert LCAProcessor und CostProcessor
+- Kombiniert Einzelergebnisse
+- Speichert Gesamtergebnisse
 
-- **Zweck**: Verarbeitet Eingabedaten, führt LCA- und Kostenberechnungen durch und kombiniert die Ergebnisse.
-- **Verwendung**: `python run_processors.py <Pfad_zur_Eingabedatei> `
-- **Funktionen**:
-  - Lädt Eingabedaten
-  - Führt LCAProcessor und CostProcessor aus
-  - Kombiniert und speichert die Ergebnisse
+#### 🔧 Verwendung
+```bash
+python run_processors.py <Pfad_zur_Eingabedatei>
+```
 
-### [`dataset_gen.py`](dataset_gen.py)
+#### ⚙️ Prozessablauf
+1. Datenvalidierung
+2. LCA-Berechnung
+3. Kostenberechnung
+4. Ergebnisintegration
+</details>
 
-Skript zur Generierung großer Testdatensätze.
+### 📊 `dataset_gen.py`
+Generator für realistische Testdatensätze. Erstellt umfangreiche Daten für Leistungs- und Skalierungstests.
+* Generierung realistischer Testszenarien
+* Anpassbare Datensatzgrößen
+* Strukturierte CSV-Ausgabe
+* Integrierte Validierung
 
-- **Zweck**: Erstellt umfangreiche Datensätze für Leistungs- und Skalierungstests.
-- **Verwendung**: `python dataset_gen.py `
-- **Funktionen**:
-  - Generiert zufällige, aber realistische Testdaten
-  - Speichert den generierten Datensatz als CSV-Datei
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-### [`profiler.py`](profiler.py)
+#### 📋 Hauptfunktionen
+- Generiert realistische Testdaten
+- Validiert Datenstruktur
+- Speichert als CSV
 
-Skript zur Leistungsanalyse der Module.
+#### 🔧 Verwendung
+```bash
+python dataset_gen.py
+```
 
-- **Zweck**: Führt Leistungsprofile der Hauptfunktionen aus und generiert Berichte.
-- **Verwendung**: `python profiler.py <Pfad_zur_Eingabedatei> `
-- **Funktionen**:
-  - Führt die Hauptverarbeitung mit Profiling aus
-  - Generiert detaillierte Leistungsberichte
-  - Speichert Profiling-Daten zur weiteren Analyse
+#### 📝 Generierte Daten
+- Bauteilinformationen
+- KBOB-Referenzdaten
+- Kostenkennwerte
+</details>
 
-### [`generate_summary.py`](generate_summary.py)
+### 📈 `profiler.py`
+Leistungsanalyse-Tool für Module. Erstellt detaillierte Performance-Profile und Optimierungsvorschläge.
+* CPU/Memory Profiling
+* Zeitliche Analyse
+* Bottleneck-Identifikation
+* Performance-Reporting
 
-Skript zur Erstellung von Zusammenfassungsberichten.
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
 
-- **Zweck**: Erstellt übersichtliche Zusammenfassungen der Berechnungsergebnisse.
-- **Verwendung**: `python generate_summary.py `
-- **Funktionen**:
-  - Liest die kombinierten Ergebnisdaten
-  - Berechnet Gesamtsummen und Statistiken
-  - Generiert einen lesbaren Zusammenfassungsbericht
+#### 📋 Hauptfunktionen
+- Performance-Profiling
+- Detaillierte Berichtgenerierung
+- Speicherung der Profiling-Daten
 
-## Verwendung
+#### 🔧 Verwendung
+```bash
+python profiler.py <Pfad_zur_Eingabedatei>
+```
 
-Die Skripte sind für eine sequenzielle Ausführung konzipiert:
+#### 📊 Analysebereiche
+- Ausführungszeiten
+- Speichernutzung
+- CPU-Auslastung
+</details>
 
-1. `dataset_gen.py` zur Erstellung von Testdaten (falls erforderlich).
-2. `run_processors.py` zur Durchführung der Hauptberechnungen.
-3. `profiler.py` zur Leistungsanalyse (optional).
-4. `generate_summary.py` zur Erstellung eines Überblicks über die Ergebnisse.
+### 📑 `generate_summary.py`
+Generator für übersichtliche Ergebnisberichte. Bereitet Berechnungsergebnisse leicht verständlich auf.
+* Aggregierte Übersichten
+* Statistische Auswertungen
+* Formatierte Ausgabe
+* Dateiexport
+
+<details>
+<summary><b>🔍 Implementierungsdetails</b></summary>
+
+#### 📋 Hauptfunktionen
+- Liest Ergebnisdaten
+- Berechnet Statistiken
+- Generiert Berichte
+
+#### 🔧 Verwendung
+```bash
+python generate_summary.py
+```
+
+#### 📊 Berichtsinhalte
+- Gesamtübersicht
+- Detailanalysen
+- Fehlerstatistiken
+</details>
+
+## 🔄 Workflow
+
+### Empfohlene Ausführungsreihenfolge
+
+1. **Testdaten (optional)**
+   ```bash
+   python dataset_gen.py
+   ```
+
+2. **Hauptberechnung**
+   ```bash
+   python run_processors.py input.xlsx
+   ```
+
+3. **Performance-Analyse (optional)**
+   ```bash
+   python profiler.py input.xlsx
+   ```
+
+4. **Berichtgenerierung**
+   ```bash
+   python generate_summary.py
+   ```
+
+> [!TIP]
+> Für optimale Ergebnisse wird empfohlen, die Skripte in der angegebenen Reihenfolge auszuführen.
