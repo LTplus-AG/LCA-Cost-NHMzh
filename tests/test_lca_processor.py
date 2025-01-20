@@ -1,10 +1,20 @@
-import pytest
-import json
+import sys
 import os
 from pathlib import Path
+
+# Add project root to Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+import pytest
+import json
 import pandas as pd
+import time
+import logging
 
 from modules.lca_processor import LCAProcessor
+from modules.storage.db_manager import DatabaseManager
 
 @pytest.fixture
 def test_data_dir():
@@ -12,24 +22,87 @@ def test_data_dir():
 
 @pytest.fixture
 def input_dir(test_data_dir):
-    return test_data_dir / "input"
+    input_path = test_data_dir / "input"
+    input_path.mkdir(parents=True, exist_ok=True)
+    return input_path
 
 @pytest.fixture
 def output_dir(test_data_dir):
-    # Create output directory if it doesn't exist
     output_path = test_data_dir / "output"
     output_path.mkdir(parents=True, exist_ok=True)
     return output_path
 
 @pytest.fixture
-def life_expectancy_file(input_dir):
-    # Create a simple life expectancy CSV for testing
-    file_path = input_dir / "test_life_expectancy.csv"
-    df = pd.DataFrame({
-        'eBKP-H Code': ['C', 'D', 'E', 'G', 'I'],
-        'Life Expectancy (years)': [50, 30, 25, 40, 35]
-    })
-    df.to_csv(file_path, index=False)
+def test_db_path(tmp_path):
+    """Create a temporary database for testing"""
+    return str(tmp_path / "test.duckdb")
+
+@pytest.fixture
+def db_manager(test_db_path, kbob_data):
+    """Initialize database with test KBOB data"""
+    # Save KBOB data to temporary CSV
+    kbob_file = Path(test_db_path).parent / "test_kbob.csv"
+    kbob_data.to_csv(kbob_file, index=True, encoding='ISO-8859-1')
+    
+    # Initialize database and import data
+    with DatabaseManager(test_db_path) as db:
+        db.import_kbob_data(
+            csv_path=str(kbob_file),
+            version="2024-6.2",
+            description="Test KBOB data"
+        )
+        db.set_active_kbob_version("2024-6.2")
+        yield db
+    
+    # Cleanup with retry
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if os.path.exists(test_db_path):
+                os.remove(test_db_path)
+            if os.path.exists(kbob_file):
+                os.remove(kbob_file)
+            break
+        except PermissionError:
+            if attempt < max_retries - 1:
+                time.sleep(0.1)  # Wait 100ms before retrying
+            else:
+                pass  # If we still can't delete after retries, let the OS handle it later
+
+@pytest.fixture
+def life_expectancy_data(db_manager):
+    """Initialize life expectancy data in the database"""
+    data = [
+        {"ebkp_code": "C", "years": 50},
+        {"ebkp_code": "D", "years": 30},
+        {"ebkp_code": "E", "years": 25},
+        {"ebkp_code": "G", "years": 40},
+        {"ebkp_code": "I", "years": 35}
+    ]
+    db_manager.init_life_expectancy_data(data)
+    return data
+
+@pytest.fixture
+def material_mappings_file(input_dir):
+    """Create a test material mappings file"""
+    web_lca_dir = input_dir / "web-lca"
+    web_lca_dir.mkdir(parents=True, exist_ok=True)
+    file_path = web_lca_dir / "juch_p31_20241221_050139.json"
+    
+    mappings = [
+        {
+            "ifc_material": "Beton",
+            "kbob_id": "E13EE05E-FD34-4FB5-A178-0FC4164A96F2"  # Hochbaubeton
+        },
+        {
+            "ifc_material": "Wärmedämmung",
+            "kbob_id": "43B03F61-91A1-438E-B958-6E274F13B241"  # Glaswolle
+        }
+    ]
+    
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(mappings, f, indent=2)
+    
     return file_path
 
 @pytest.fixture
@@ -129,28 +202,18 @@ def kbob_data():
         ]
     }).set_index("UUID-Nummer")
 
-@pytest.fixture
-def material_mappings_file(input_dir):
-    """Path to the material mappings file"""
-    return input_dir / "web-lca" / "juch_p31_20241221_050139.json"
-
-def test_lca_processor_run(input_elements, kbob_data, output_file, life_expectancy_file, material_mappings_file):
+def test_lca_processor_run(input_elements, test_db_path, db_manager, output_file, life_expectancy_data, material_mappings_file):
     # Create a temporary input file with the test data
     input_file = output_file.parent / "test_input.json"
     with open(input_file, 'w', encoding='utf-8') as f:
         json.dump(input_elements, f)
     
-    # Create a temporary KBOB data file with ISO-8859-1 encoding
-    kbob_file = output_file.parent / "test_kbob.csv"
-    kbob_data.to_csv(kbob_file, index=True, encoding='ISO-8859-1')
-    
     # Initialize and run processor
     processor = LCAProcessor(
         input_file_path=str(input_file),
-        data_file_path=str(kbob_file),
-        output_file=str(output_file),
-        life_expectancy_file_path=str(life_expectancy_file),
-        material_mappings_file=str(material_mappings_file)
+        material_mappings_file=str(material_mappings_file),
+        db_path=test_db_path,
+        output_file=str(output_file)
     )
     processor.run()
     
@@ -191,7 +254,7 @@ def test_lca_processor_run(input_elements, kbob_data, output_file, life_expectan
             else:
                 assert "error" in component
 
-def test_lca_processor_with_invalid_data(input_elements, kbob_data, output_file, life_expectancy_file, material_mappings_file):
+def test_lca_processor_with_invalid_data(input_elements, test_db_path, db_manager, output_file, life_expectancy_data, material_mappings_file):
     # Add an invalid element
     input_elements["elements"].append({
         "id": "test_invalid_guid",
@@ -224,16 +287,11 @@ def test_lca_processor_with_invalid_data(input_elements, kbob_data, output_file,
     with open(input_file, 'w', encoding='utf-8') as f:
         json.dump(input_elements, f)
     
-    # Create a temporary KBOB data file with ISO-8859-1 encoding
-    kbob_file = output_file.parent / "test_kbob.csv"
-    kbob_data.to_csv(kbob_file, index=True, encoding='ISO-8859-1')
-    
     processor = LCAProcessor(
         input_file_path=str(input_file),
-        data_file_path=str(kbob_file),
-        output_file=str(output_file),
-        life_expectancy_file_path=str(life_expectancy_file),
-        material_mappings_file=str(material_mappings_file)
+        material_mappings_file=str(material_mappings_file),
+        db_path=test_db_path,
+        output_file=str(output_file)
     )
     processor.run()
     
@@ -254,18 +312,20 @@ def test_lca_processor_with_invalid_data(input_elements, kbob_data, output_file,
     assert test_component is not None
     assert any(comp.get("failed", False) for comp in test_component["components"])
 
-def test_lca_processor_file_handling(tmp_path, kbob_data, life_expectancy_file, material_mappings_file):
-    # Create a temporary KBOB data file
-    kbob_file = tmp_path / "test_kbob.csv"
-    kbob_data.to_csv(kbob_file, index=True)
-    
+def test_lca_processor_file_handling(tmp_path, test_db_path, db_manager, life_expectancy_data, material_mappings_file):
     # Test with nonexistent input file
-    with pytest.raises(FileNotFoundError):
-        processor = LCAProcessor(
-            input_file_path=str(tmp_path / "nonexistent.json"),
-            data_file_path=str(kbob_file),
-            output_file=str(tmp_path / "output.json"),
-            life_expectancy_file_path=str(life_expectancy_file),
-            material_mappings_file=str(material_mappings_file)
-        )
-        processor.run()
+    logger = logging.getLogger()
+    previous_level = logger.getEffectiveLevel()
+    logger.setLevel(logging.CRITICAL)  # Temporarily disable lower-level logging
+    
+    try:
+        with pytest.raises(FileNotFoundError):
+            processor = LCAProcessor(
+                input_file_path=str(tmp_path / "nonexistent.json"),
+                material_mappings_file=str(material_mappings_file),
+                db_path=test_db_path,
+                output_file=str(tmp_path / "output.json")
+            )
+            processor.run()
+    finally:
+        logger.setLevel(previous_level)  # Restore previous logging level
