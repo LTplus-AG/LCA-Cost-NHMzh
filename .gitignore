@@ -200,3 +200,8 @@ Desktop.ini
 *pm.md
 *.png
 *.ps1
+
+*.duckdb
+*.duckdb-shm
+*.duckdb-wal
+

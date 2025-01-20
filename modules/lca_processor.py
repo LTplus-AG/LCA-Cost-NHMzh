@@ -89,7 +89,7 @@ class LCAProcessor(BaseProcessor):
         
         ebkp_code = str(ebkp_code).strip()
         result = self.db.conn.execute("""
-            SELECT years 
+            SELECT MIN(years) 
             FROM life_expectancy 
             WHERE ebkp_code = ?
         """, [ebkp_code]).fetchone()

@@ -7,37 +7,33 @@ from datetime import date, datetime
 
 class DatabaseManager:
     def __init__(self, db_path: str = "nhmzh_data.duckdb"):
+        """Initialize database connection and tables"""
         self.db_path = db_path
         self._conn = None
+        self._init_connection()
         self._init_db()
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+    def _init_connection(self):
+        """Initialize database connection"""
+        if self._conn is None:
+            self._conn = duckdb.connect(self.db_path)
 
     @property
     def conn(self):
+        """Get database connection, reinitializing if necessary"""
         if self._conn is None:
-            try:
-                self._conn = duckdb.connect(self.db_path)
-                self._conn.execute("PRAGMA threads=4")
-                self._conn.execute("PRAGMA memory_limit='4GB'")
-            except Exception as e:
-                logging.error(f"Failed to connect to database: {str(e)}")
-                raise
+            self._init_connection()
         return self._conn
 
     def close(self):
-        """Explicitly close the connection"""
+        """Close database connection"""
         if self._conn is not None:
-            try:
-                self._conn.close()
-            except Exception:
-                pass  # Ignore errors during close
-            finally:
-                self._conn = None
+            self._conn.close()
+            self._conn = None
+
+    def __del__(self):
+        """Ensure connection is closed on deletion"""
+        self.close()
 
     def _init_db(self):
         """Initialize database tables if they don't exist"""
@@ -72,9 +68,22 @@ class DatabaseManager:
                 );
 
                 CREATE TABLE IF NOT EXISTS life_expectancy (
-                    ebkp_code TEXT PRIMARY KEY,
+                    ebkp_code TEXT NOT NULL,
+                    description TEXT NOT NULL,
                     years INTEGER NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    model_based BOOLEAN DEFAULT true,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ebkp_code, description)
+                );
+
+                CREATE TABLE IF NOT EXISTS cost_reference (
+                    ebkp_code TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    unit TEXT NOT NULL,
+                    cost_per_unit REAL NOT NULL,
+                    version TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ebkp_code, version)
                 );
 
                 -- Project Data Tables
@@ -193,57 +202,63 @@ class DatabaseManager:
             logging.error(f"Failed to initialize database: {str(e)}")
             raise
 
-    def import_kbob_data(self, csv_path: str, version: str, description: Optional[str] = None) -> None:
+    def import_kbob_data(self, csv_path: str, version: str, description: Optional[str] = None, use_transaction: bool = True) -> None:
         """Import KBOB data from CSV file"""
-        df = pd.read_csv(csv_path, encoding="ISO-8859-1")
-        
-        # Transform the dataframe to match our schema
-        kbob_df = pd.DataFrame({
-            'uuid': df['UUID-Nummer'].astype(str).str.strip(),
-            'name': df['BAUMATERIALIEN'],
-            'indicator_co2eq': df['Treibhausgasemissionen, Total [kg CO2-eq]'],
-            'indicator_penre': df['Primaerenergie nicht erneuerbar, Total [kWh oil-eq]'],
-            'indicator_ubp': df['UBP (Total)'],
-            'density': pd.to_numeric(df['Rohdichte/ Flaechenmasse'], errors='coerce'),
-            'version': version
-        })
-
-        # Fill NaN densities with 0
-        kbob_df['density'] = kbob_df['density'].fillna(0)
-
         try:
             conn = self.conn
-            conn.execute("BEGIN TRANSACTION")
+            
+            if use_transaction:
+                conn.execute("BEGIN TRANSACTION")
+            
+            # First, delete existing version info and materials for this version
+            conn.execute("DELETE FROM kbob_materials WHERE version = ?", [version])
+            conn.execute("DELETE FROM kbob_versions WHERE version = ?", [version])
+            
+            # Read and transform the data
+            df = pd.read_csv(csv_path, encoding="ISO-8859-1")
+            kbob_df = pd.DataFrame({
+                'uuid': df['UUID-Nummer'].astype(str).str.strip(),
+                'name': df['BAUMATERIALIEN'],
+                'indicator_co2eq': df['Treibhausgasemissionen, Total [kg CO2-eq]'],
+                'indicator_penre': df['Primaerenergie nicht erneuerbar, Total [kWh oil-eq]'],
+                'indicator_ubp': df['UBP (Total)'],
+                'density': pd.to_numeric(df['Rohdichte/ Flaechenmasse'], errors='coerce'),
+                'version': version
+            })
+
+            # Fill NaN densities with 0
+            kbob_df['density'] = kbob_df['density'].fillna(0)
             
             # Insert version info with explicit date
             today = date.today().isoformat()
             conn.execute("""
                 INSERT INTO kbob_versions (version, release_date, description)
                 VALUES (?, ?, ?)
-                ON CONFLICT (version) DO UPDATE SET
-                    release_date = excluded.release_date,
-                    description = excluded.description
             """, [version, today, description])
 
-            # First, delete existing records for this version
-            conn.execute("""
-                DELETE FROM kbob_materials 
-                WHERE version = ?
-            """, [version])
-
-            # Then insert new records
-            conn.execute("""
-                INSERT INTO kbob_materials (
-                    uuid, name, indicator_co2eq, indicator_penre, 
-                    indicator_ubp, density, version
-                )
-                SELECT * FROM kbob_df
-            """)
+            # Insert new records
+            for _, row in kbob_df.iterrows():
+                conn.execute("""
+                    INSERT INTO kbob_materials (
+                        uuid, name, indicator_co2eq, indicator_penre, 
+                        indicator_ubp, density, version
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, [
+                    row['uuid'], row['name'], row['indicator_co2eq'],
+                    row['indicator_penre'], row['indicator_ubp'],
+                    row['density'], row['version']
+                ])
             
-            conn.execute("COMMIT")
+            if use_transaction:
+                conn.execute("COMMIT")
             logging.info(f"Successfully imported {len(kbob_df)} KBOB materials")
         except Exception as e:
-            conn.execute("ROLLBACK")
+            if use_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except:
+                    pass  # Ignore rollback errors
             logging.error(f"Failed to import KBOB data: {str(e)}")
             raise
 
@@ -297,11 +312,12 @@ class DatabaseManager:
             logging.error(f"Failed to get active KBOB version: {str(e)}")
             raise
 
-    def set_active_kbob_version(self, version: str) -> None:
+    def set_active_kbob_version(self, version: str, use_transaction: bool = True) -> None:
         """Set the active KBOB version"""
         try:
             conn = self.conn
-            conn.execute("BEGIN TRANSACTION")
+            if use_transaction:
+                conn.execute("BEGIN TRANSACTION")
             
             # First deactivate all versions
             conn.execute("UPDATE kbob_versions SET is_active = false")
@@ -313,18 +329,27 @@ class DatabaseManager:
             """, [version]).rowcount
             
             if rows_updated == 0:
-                conn.execute("ROLLBACK")
+                if use_transaction:
+                    conn.execute("ROLLBACK")
                 raise ValueError(f"Version {version} not found")
             
-            conn.execute("COMMIT")
+            if use_transaction:
+                conn.execute("COMMIT")
             logging.info(f"Successfully set version {version} as active")
         except Exception as e:
-            conn.execute("ROLLBACK")
+            if use_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except:
+                    pass  # Ignore rollback errors
             raise
 
     def init_reference_data(self, kbob_path: str, cost_path: str):
         """Initialize reference data tables from source files"""
-        with self.conn as conn:
+        try:
+            conn = self.conn
+            conn.execute("BEGIN TRANSACTION")
+            
             # Load data directly from CSV/Parquet files
             conn.execute("""
                 INSERT INTO kbob_materials
@@ -335,16 +360,45 @@ class DatabaseManager:
                 INSERT INTO cost_reference
                 SELECT * FROM read_csv_auto(?)
             """, [cost_path])
+            
+            conn.execute("COMMIT")
+            logging.info("Successfully loaded reference data")
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except:
+                pass  # Ignore rollback errors
+            logging.error(f"Failed to load reference data: {str(e)}")
+            raise
 
-    def init_life_expectancy_data(self, data: List[Dict[str, Any]]):
+    def init_life_expectancy_data(self, data: List[Dict[str, Any]], use_transaction: bool = True):
         """Initialize life expectancy data in the database"""
-        with self.conn as conn:
+        try:
+            conn = self.conn
+            if use_transaction:
+                conn.execute("BEGIN TRANSACTION")
+            
             conn.execute("DELETE FROM life_expectancy")  # Clear existing data
             for item in data:
                 conn.execute("""
-                    INSERT INTO life_expectancy (ebkp_code, years)
-                    VALUES (?, ?)
-                """, [item["ebkp_code"], item["years"]])
+                    INSERT INTO life_expectancy (ebkp_code, description, years, model_based)
+                    VALUES (?, ?, ?, ?)
+                """, [
+                    item["ebkp_code"],
+                    item["description"],
+                    item["years"],
+                    item.get("model_based", True)
+                ])
+            
+            if use_transaction:
+                conn.execute("COMMIT")
+        except Exception as e:
+            if use_transaction:
+                try:
+                    conn.execute("ROLLBACK")
+                except:
+                    pass  # Ignore rollback errors
+            raise
 
     def store_ifc_elements(self, elements: List[Dict[str, Any]], project_id: str) -> None:
         """Store IFC elements and their materials in the database"""
