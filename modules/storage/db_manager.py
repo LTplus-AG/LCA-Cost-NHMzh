@@ -406,43 +406,65 @@ class DatabaseManager:
             conn = self.conn
             conn.execute("BEGIN TRANSACTION")
             
+            logging.info(f"About to insert {len(elements)} IFC elements into table 'ifc_elements' for project {project_id} using database file: {self.db_path}")
+            
             for element in elements:
-                # Get element identifier
+                # Retrieve element identifier; fallback to 'guid' if 'id' is missing
                 element_id = element.get('id') or element.get('guid')
                 if not element_id:
                     continue
-                
-                # Get volume data
+
+                # Extract quantity and dimension values with defaults if missing
                 quantities = element.get('quantities', {})
                 volume_data = quantities.get('volume', {})
                 volume_net = volume_data.get('net')
                 volume_gross = volume_data.get('gross')
-                
-                # Get dimensions
+
                 dimensions = quantities.get('dimensions', {})
                 length = dimensions.get('length')
                 width = dimensions.get('width')
                 height = dimensions.get('height')
-                
-                # Get area data
+
                 area_data = quantities.get('area', {})
                 area_net = area_data.get('net')
                 area_gross = area_data.get('gross')
-                
-                # Insert element
+
+                # Support both snake_case and camelCase keys for boolean properties
+                load_bearing = element.get('load_bearing') if element.get('load_bearing') is not None else element.get('properties', {}).get('loadBearing')
+                is_external = element.get('is_external') if element.get('is_external') is not None else element.get('properties', {}).get('isExternal')
+
+                # Retrieve the ebkp (or reference) property
+                ebkp = element.get('properties', {}).get('ebkp') or element.get('properties', {}).get('reference')
+
+                # Insert the IFC element using all the specified columns:
+                # AZ id, A-Z ifc class, A-Z object_type, (Z] load_bearing, is_external,
+                # A-Z ebkp, 123 volume net, 123 volume_gross, 123 area net, 123 area_gross,
+                # 123 length, 123 width, 123 height, A-Z project_id, timestamp.
                 conn.execute("""
                     INSERT INTO ifc_elements (
-                        id, ifc_class, object_type, load_bearing, is_external, ebkp,
-                        volume_net, volume_gross, area_net, area_gross,
-                        length, width, height, project_id, timestamp
+                        id,              -- AZ id
+                        ifc_class,       -- A-Z ifc class
+                        object_type,     -- A-Z object_type
+                        load_bearing,    -- (Z] load_bearing
+                        is_external,     -- is_external
+                        ebkp,            -- A-Z ebkp
+                        volume_net,      -- 123 volume net
+                        volume_gross,    -- 123 volume_gross
+                        area_net,        -- 123 area net
+                        area_gross,      -- 123 area_gross
+                        length,          -- 123 length
+                        width,           -- 123 width
+                        height,          -- 123 height
+                        project_id,      -- A-Z project_id
+                        timestamp        -- timestamp (CURRENT_TIMESTAMP)
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, [
                     element_id,
-                    element.get('ifc_class', 'Unknown'),  # Default to 'Unknown' if not provided
+                    element.get('ifc_class', 'Unknown'),
                     element.get('object_type'),
-                    element.get('load_bearing'),
-                    element.get('is_external'),
-                    element.get('properties', {}).get('ebkp'),
+                    load_bearing,
+                    is_external,
+                    ebkp,
                     volume_net,
                     volume_gross,
                     area_net,
@@ -453,7 +475,6 @@ class DatabaseManager:
                     project_id
                 ])
                 
-                # Handle material volumes
                 for material_name, material_data in element.get('material_volumes', {}).items():
                     conn.execute("""
                         INSERT INTO ifc_element_materials (
