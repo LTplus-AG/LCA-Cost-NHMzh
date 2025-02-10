@@ -12,7 +12,7 @@ class BaseProcessor(ABC):
         self.output_file = output_file
         self.minio_config = minio_config
         self.results = None
-        self.minio_manager = MinioManager(**minio_config) if minio_config else None
+        self.minio_manager = MinioManager(config=minio_config) if minio_config else None
 
     def load_data(self):
         """Load data from input file."""

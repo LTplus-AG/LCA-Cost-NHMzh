@@ -401,87 +401,79 @@ class DatabaseManager:
             raise
 
     def store_ifc_elements(self, elements: List[Dict[str, Any]], project_id: str) -> None:
-        """Store IFC elements and their materials in the database"""
+        """Store IFC elements in the database."""
         try:
             conn = self.conn
             conn.execute("BEGIN TRANSACTION")
-
+            
             for element in elements:
-                # Handle both dictionary and DataFrame row inputs
-                if isinstance(element, str):
-                    continue  # Skip if element is a string
-                
-                # Get element ID based on input type
-                element_id = element.get("id") or element.get("GUID")
+                # Get element identifier
+                element_id = element.get('id') or element.get('guid')
                 if not element_id:
-                    logging.warning(f"Skipping element without ID: {element}")
                     continue
-
-                # Extract properties based on input format
-                if "properties" in element:
-                    # LCA format
-                    properties = element.get("properties", {})
-                    quantities = element.get("quantities", {})
-                    volume_data = quantities.get("volume", {})
-                    dimensions = quantities.get("dimensions", {})
-                    
+                
+                # Get volume data
+                quantities = element.get('quantities', {})
+                volume_data = quantities.get('volume', {})
+                volume_net = volume_data.get('net')
+                volume_gross = volume_data.get('gross')
+                
+                # Get dimensions
+                dimensions = quantities.get('dimensions', {})
+                length = dimensions.get('length')
+                width = dimensions.get('width')
+                height = dimensions.get('height')
+                
+                # Get area data
+                area_data = quantities.get('area', {})
+                area_net = area_data.get('net')
+                area_gross = area_data.get('gross')
+                
+                # Insert element
+                conn.execute("""
+                    INSERT INTO ifc_elements (
+                        id, ifc_class, object_type, load_bearing, is_external, ebkp,
+                        volume_net, volume_gross, area_net, area_gross,
+                        length, width, height, project_id, timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, [
+                    element_id,
+                    element.get('ifc_class', 'Unknown'),  # Default to 'Unknown' if not provided
+                    element.get('object_type'),
+                    element.get('load_bearing'),
+                    element.get('is_external'),
+                    element.get('properties', {}).get('ebkp'),
+                    volume_net,
+                    volume_gross,
+                    area_net,
+                    area_gross,
+                    length,
+                    width,
+                    height,
+                    project_id
+                ])
+                
+                # Handle material volumes
+                for material_name, material_data in element.get('material_volumes', {}).items():
                     conn.execute("""
-                        INSERT INTO ifc_elements (
-                            id, ifc_class, object_type, load_bearing, is_external,
-                            ebkp, volume_net, volume_gross, area_net, area_gross,
-                            length, width, height, project_id
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, [
-                        element_id,
-                        element.get("ifc_class"),
-                        element.get("object_type"),
-                        properties.get("loadBearing"),
-                        properties.get("isExternal"),
-                        properties.get("ebkp"),
-                        volume_data.get("net"),
-                        volume_data.get("gross"),
-                        quantities.get("area", {}).get("net"),
-                        quantities.get("area", {}).get("gross"),
-                        dimensions.get("length"),
-                        dimensions.get("width"),
-                        dimensions.get("height"),
-                        project_id
-                    ])
-
-                    # Handle material volumes for LCA format
-                    for material_name, material_data in element.get("material_volumes", {}).items():
-                        conn.execute("""
-                            INSERT INTO ifc_element_materials (
-                                element_id, material_name, fraction, volume, width, density
-                            ) VALUES (?, ?, ?, ?, ?, ?)
-                        """, [
-                            element_id,
-                            material_name,
-                            material_data.get("fraction"),
-                            material_data.get("volume"),
-                            material_data.get("width"),
-                            material_data.get("density", 0)
-                        ])
-                else:
-                    # Cost format
-                    conn.execute("""
-                        INSERT INTO ifc_elements (
-                            id, ebkp, volume_gross, length, area_gross, project_id
+                        INSERT INTO ifc_element_materials (
+                            element_id, material_name, fraction, volume, width, density
                         ) VALUES (?, ?, ?, ?, ?, ?)
                     """, [
                         element_id,
-                        element.get("eBKP-H"),
-                        element.get("Volume"),
-                        element.get("Length"),
-                        element.get("Area"),
-                        project_id
+                        material_name,
+                        material_data.get('fraction'),
+                        material_data.get('volume'),
+                        material_data.get('width'),
+                        material_data.get('density', 0)
                     ])
-
+            
             conn.execute("COMMIT")
-            logging.info(f"Successfully stored {len(elements)} IFC elements for project {project_id}")
         except Exception as e:
-            conn.execute("ROLLBACK")
-            logging.error(f"Failed to store IFC elements: {str(e)}")
+            try:
+                conn.execute("ROLLBACK")
+            except:
+                pass  # Ignore rollback errors
             raise
 
     def delete_ifc_element(self, element_id: str) -> None:

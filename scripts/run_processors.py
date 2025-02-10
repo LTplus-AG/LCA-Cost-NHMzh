@@ -47,6 +47,16 @@ def get_minio_config():
         os.getenv('MINIO_LCA_COST_DATA_BUCKET')
     ]) else None
 
+def get_db_path():
+    """Get standardized database path."""
+    if os.path.exists('/.dockerenv'):
+        return "/app/data/nhmzh_data.duckdb"
+    else:
+        # Get the path to the NHMzh root directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.dirname(os.path.dirname(current_dir))  # NHMzh root
+        return os.path.join(base_dir, "LCA-Cost-NHMzh", "data", "nhmzh_data.duckdb")
+
 def main():
     # Configure logging
     logging.basicConfig(
@@ -57,33 +67,45 @@ def main():
         ]
     )
 
-    if len(sys.argv) != 2:
-        print("Usage: python scripts/run_processors.py <input_file_name>")
+    # Get the absolute path to the LCA-Cost-NHMzh directory
+    current_dir = os.path.dirname(os.path.abspath(__file__))  # scripts/
+    base_dir = os.path.dirname(current_dir)  # LCA-Cost-NHMzh/
+    
+    # Use standardized database path
+    db_path = get_db_path()
+    logging.info(f"Using database at: {db_path}")
+    
+    # Ensure database directory exists
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    
+    if len(sys.argv) != 3:
+        print("Usage: python scripts/run_processors.py <input_file_name> <mappings_file_name>")
         sys.exit(1)
 
     input_file_name = sys.argv[1]
+    mappings_file_name = sys.argv[2]
     
-    # Check if we're running in Docker
-    if os.path.exists('/.dockerenv'):
-        # We're in Docker, use absolute paths
-        base_dir = "/app"
-        input_file_path = os.path.join("/app/data/input", input_file_name)
-    else:
-        # We're running locally, use relative paths
-        base_dir = os.path.dirname(current_dir)  # Path to 'NHMzh-modules/'
-        input_file_path = os.path.join(base_dir, input_file_name)
+    # Construct full paths for input files
+    project_root = os.path.dirname(base_dir)  # NHMzh/
+    input_file_path = os.path.join(project_root, input_file_name)
+    mappings_file = os.path.join(project_root, mappings_file_name)
 
     # Construct paths
-    kbob_data_file_path = os.path.join(base_dir, "data", "input", "KBOB.csv")
-    life_expectancy_file_path = os.path.join(base_dir, "data", "input", "amortization_periods.csv")
-    cost_data_file_path = os.path.join(base_dir, "data", "input", "CostDB.csv")
     output_directory = os.path.join(base_dir, "data", "output")
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_directory, exist_ok=True)
     
     if not os.path.exists(input_file_path):
         logging.error(f"Input file not found: {input_file_path}")
         sys.exit(1)
+    
+    if not os.path.exists(mappings_file):
+        logging.error(f"Mappings file not found: {mappings_file}")
+        sys.exit(1)
 
     logging.info(f"Input File Path: {input_file_path}")
+    logging.info(f"Using material mappings from: {mappings_file}")
 
     lca_output_file = os.path.join(output_directory, "lca_results.json")
     cost_output_file = os.path.join(output_directory, "cost_results.json")
@@ -100,10 +122,10 @@ def main():
     try:
         # Run LCA Processor
         lca_processor = LCAProcessor(
-            input_file_path,
-            kbob_data_file_path,
-            lca_output_file,
-            life_expectancy_file_path,
+            input_file_path=input_file_path,
+            material_mappings_file=mappings_file,
+            db_path=db_path,
+            output_file=lca_output_file,
             minio_config=minio_config
         )
         lca_processor.run()
@@ -111,9 +133,10 @@ def main():
 
         # Run Cost Processor
         cost_processor = CostProcessor(
-            input_file_path, 
-            cost_data_file_path, 
-            cost_output_file,
+            input_file_path=input_file_path,
+            data_file_path=cost_data_file_path,
+            output_file=cost_output_file,
+            db_path=db_path,
             minio_config=minio_config
         )
         cost_processor.run()

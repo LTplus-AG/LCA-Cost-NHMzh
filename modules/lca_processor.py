@@ -38,13 +38,12 @@ class LCAProcessor(BaseProcessor):
         # Update project status to processing
         self.db.update_project_status(self.project_id, "processing")
         
-        # Load data
+        # Load and validate data first
         self.element_data = load_data(self.input_file_path)
         self.material_mappings = load_data(self.material_mappings_file)
         
         # Validate data structure before storing
-        if not isinstance(self.element_data, dict) or "elements" not in self.element_data:
-            raise ValueError("Input data must be a dictionary with 'elements' key")
+        self.validate_data()
         
         # Store IFC elements in database
         elements = self.element_data.get("elements", [])
@@ -52,35 +51,70 @@ class LCAProcessor(BaseProcessor):
             raise ValueError("Elements must be a list")
             
         self.db.store_ifc_elements(elements, self.project_id)
-        
-        self.validate_data()
         self.processing_start_time = time.time()
 
-    def validate_data(self) -> None:
-        """Validate that the required fields are present in the element data."""
-        # For element data (JSON)
-        if not isinstance(self.element_data, dict) or "elements" not in self.element_data:
-            raise ValueError("Input data must be a dictionary with 'elements' key")
+    def validate_data(self):
+        """Validate input data structure"""
+        if not isinstance(self.element_data, dict):
+            raise ValueError("Input data must be a dictionary")
         
-        # Check each element has required structure
-        for element in self.element_data["elements"]:
-            required_fields = ["id", "materials", "material_volumes", "properties"]
-            missing_fields = [field for field in required_fields if field not in element]
-            if missing_fields:
-                raise ValueError(f"Element missing required fields: {', '.join(missing_fields)}")
-            
-            # Check properties
-            if "ebkp" not in element["properties"]:
-                raise ValueError(f"Element {element['id']} missing ebkp in properties")
-            
-            # Check material volumes
-            for material in element["materials"]:
-                if material not in element["material_volumes"]:
-                    raise ValueError(f"Element {element['id']} missing volume data for material {material}")
+        if "elements" not in self.element_data:
+            raise ValueError("Input data must contain 'elements' key")
+        
+        elements = self.element_data["elements"]
+        if not isinstance(elements, list):
+            raise ValueError("Elements must be a list")
+        
+        # Check each element has minimum required fields
+        valid_elements = []
+        for i, element in enumerate(elements):
+            try:
+                if not isinstance(element, dict):
+                    raise ValueError(f"Element at index {i} must be a dictionary")
                 
-                volume_data = element["material_volumes"][material]
-                if "volume" not in volume_data or "fraction" not in volume_data:
-                    raise ValueError(f"Element {element['id']} material {material} missing volume or fraction")
+                # Get element identifier for better error messages
+                element_id = element.get('guid') or element.get('id') or f"at index {i}"
+                
+                # Check required fields with more flexible field names
+                if not (element.get('guid') or element.get('id')):
+                    raise ValueError(f"Element {element_id} missing identifier (guid or id)")
+                
+                # Check for materials and their volumes
+                materials = element.get('materials', [])
+                material_volumes = element.get('material_volumes', {})
+                
+                if not materials:
+                    raise ValueError(f"Element {element_id} missing materials")
+                
+                has_volume = False
+                for material_name in materials:
+                    material_data = material_volumes.get(material_name, {})
+                    volume = material_data.get('volume')
+                    if volume is not None and volume > 0:
+                        has_volume = True
+                        break
+                
+                if not has_volume:
+                    raise ValueError(f"Element {element_id} missing volume information")
+                
+                valid_elements.append(element)
+            except Exception as e:
+                logging.warning(f"Skipping invalid element: {str(e)}")
+                # Log processing error
+                if hasattr(self, 'db'):
+                    self.db.log_processing_error(
+                        project_id=self.project_id,
+                        error_data={
+                            "element_id": element_id if 'element_id' in locals() else f"at index {i}",
+                            "error_type": type(e).__name__,
+                            "error_message": str(e)
+                        }
+                    )
+        
+        # Update elements list to only include valid elements
+        self.element_data["elements"] = valid_elements
+        if not valid_elements:
+            raise ValueError("No valid elements found after validation")
 
     def get_life_expectancy(self, ebkp_code: str) -> int:
         """Get life expectancy for a given eBKP-H code from the database."""
@@ -122,14 +156,18 @@ class LCAProcessor(BaseProcessor):
                     "components": []
                 }
                 
+                # Skip elements without materials
+                if not element.get("materials"):
+                    logging.warning(f"Element {element['id']} missing materials, skipping")
+                    failed_elements += 1
+                    continue
+                
                 for material_name in element["materials"]:
                     try:
-                        material_data = element["material_volumes"].get(material_name)
-                        if not material_data:
-                            raise ValueError(f"Missing volume data for material: {material_name}")
-                        
-                        # Process material data and calculate metrics
-                        volume = material_data.get("volume", 0) * material_data.get("fraction", 1.0)
+                        # Get material volume data
+                        material_data = element.get("material_volumes", {}).get(material_name, {})
+                        volume = material_data.get("volume", 0)
+                        fraction = material_data.get("fraction", 1.0)
                         density = material_data.get("density", 0)
                         
                         if volume <= 0:
@@ -173,7 +211,6 @@ class LCAProcessor(BaseProcessor):
                             "ubp_relative": round(ubp / life_expectancy, 0),
                             "failed": False
                         })
-                        
                     except Exception as e:
                         # Log processing error
                         self.db.log_processing_error(
@@ -195,9 +232,10 @@ class LCAProcessor(BaseProcessor):
                         })
                         failed_elements += 1
                 
-                # Add element to results
-                element_result["shared_guid"] = len(element_result["components"]) > 1
-                results.append(element_result)
+                # Only add elements that have at least one component
+                if element_result["components"]:
+                    element_result["shared_guid"] = len(element_result["components"]) > 1
+                    results.append(element_result)
                 processed_elements += 1
             
             self.results = results
@@ -215,9 +253,8 @@ class LCAProcessor(BaseProcessor):
                 }
             )
             
-            # Update project status
-            final_status = "completed" if failed_elements == 0 else "failed"
-            self.db.update_project_status(self.project_id, final_status)
+            # Update project status - consider it completed even with some failures
+            self.db.update_project_status(self.project_id, "completed")
             
         except Exception as e:
             self.db.update_project_status(self.project_id, "failed")
