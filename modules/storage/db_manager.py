@@ -675,3 +675,50 @@ class DatabaseManager:
             logging.error(f"Failed to get project info: {e}")
             raise
 
+    def get_ifc_elements(self, project_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetch IFC elements for the given project from the database.
+        
+        Returns a list of dictionaries where each dictionary corresponds to a row in the ifc_elements table.
+        """
+        try:
+            cursor = self.conn.execute(
+                "SELECT * FROM ifc_elements WHERE project_id = ?",
+                [project_id]
+            )
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logging.error(f"Error fetching IFC elements for project {project_id}: {e}")
+            raise
+
+    def get_cost_data(self, project_id: str) -> List[Dict[str, Any]]:
+        """
+        Fetch cost data (from the cost_reference table) to be used in cost processing.
+        
+        This example maps the underlying table columns to the expected cost data keys:
+         - 'Code' for identifier (taken from ebkp_code)
+         - 'Kennwert' for the cost value (taken from cost_per_unit)
+         - 'reference' for the unit (taken from unit)
+         
+        Returns a list of dictionaries.
+        """
+        try:
+            # Adjust the query as needed. Here we select from cost_reference without filtering by project_id,
+            # since cost_reference may be shared across projects.
+            cursor = self.conn.execute("""
+                SELECT 
+                    ebkp_code AS Code,
+                    cost_per_unit AS Kennwert,
+                    unit AS reference,
+                    created_at
+                FROM cost_reference
+            """)
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logging.error(f"Error fetching cost data for project {project_id}: {e}")
+            raise
+

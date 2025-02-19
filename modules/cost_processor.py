@@ -6,7 +6,7 @@ import pandas as pd
 
 from modules.base_processor import BaseProcessor
 from modules.storage.db_manager import DatabaseManager
-from utils.shared_utils import validate_columns, validate_value
+from utils.shared_utils import validate_columns, validate_value, ensure_output_directory, save_data_to_json
 
 class CostProcessor(BaseProcessor):
     def __init__(self, input_file_path, data_file_path, output_file, 
@@ -19,27 +19,43 @@ class CostProcessor(BaseProcessor):
         self.processing_start_time = None
     
     def load_data(self):
-        # Initialize project in database
+        # Initialize project in the database (Cost processing doesn't use a KBOB version)
         self.db.init_project(
             project_id=self.project_id,
             name=self.project_name,
-            kbob_version="N/A"  # Cost processing doesn't use KBOB
+            kbob_version="N/A"
         )
         
         # Update project status to processing
         self.db.update_project_status(self.project_id, "processing")
         
-        # Load data
-        self.element_data = pd.read_csv(self.input_file_path)
-        self.data = pd.read_csv(self.data_file_path)
+        # Load IFC element data. If no file was provided, load from the database.
+        if self.input_file_path is None:
+            # Assuming get_ifc_elements returns a list of dictionaries
+            elements = self.db.get_ifc_elements(self.project_id)
+            if not elements:
+                raise ValueError(f"No IFC elements found in the database for project {self.project_id}")
+            self.element_data = pd.DataFrame(elements)
+        else:
+            self.element_data = pd.read_csv(self.input_file_path)
         
-        # Convert DataFrame to list of dictionaries for storage
-        elements = self.element_data.to_dict('records')
-        if not elements:
+        # Load cost data. If no file was provided, load from the database.
+        if self.data_file_path is None:
+            # Assuming get_cost_data returns a list of dictionaries with cost information
+            cost_data = self.db.get_cost_data(self.project_id)
+            if not cost_data:
+                raise ValueError(f"No cost data found in the database for project {self.project_id}")
+            self.data = pd.DataFrame(cost_data)
+        else:
+            self.data = pd.read_csv(self.data_file_path)
+        
+        # Convert DataFrame to list of dictionaries if needed (for storing IFC elements)
+        csv_elements = self.element_data.to_dict('records')
+        if not csv_elements:
             raise ValueError("No elements found in input data")
-            
+        
         # Store IFC elements in database
-        self.db.store_ifc_elements(elements, self.project_id)
+        self.db.store_ifc_elements(csv_elements, self.project_id)
         
         self.validate_data()
         self.processing_start_time = time.time()

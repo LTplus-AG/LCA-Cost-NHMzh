@@ -21,11 +21,12 @@ class LCAProcessor(BaseProcessor):
         self.processing_start_time = None
 
     def load_data(self):
-        # Initialize project in database
+        # Get active KBOB version from the database
         active_version = self.db.get_active_kbob_version()
         if not active_version:
             raise ValueError("No active KBOB version found in database")
         
+        # Upsert project record
         self.db.init_project(
             project_id=self.project_id,
             name=self.project_name,
@@ -35,19 +36,19 @@ class LCAProcessor(BaseProcessor):
         # Update project status to processing
         self.db.update_project_status(self.project_id, "processing")
         
-        # Load and validate data first
-        self.element_data = load_data(self.input_file_path)
-        self.material_mappings = load_data(self.material_mappings_file)
-        
-        # Validate data structure before storing
-        self.validate_data()
-        
-        # Store IFC elements in database
-        elements = self.element_data.get("elements", [])
-        if not isinstance(elements, list):
-            raise ValueError("Elements must be a list")
+        # Load from the db when file paths are not provided.
+        if self.input_file_path is None:
+            self.element_data = self.db.get_ifc_elements(self.project_id)
+        else:
+            self.element_data = load_data(self.input_file_path)
             
-        self.db.store_ifc_elements(elements, self.project_id)
+        if self.material_mappings_file is None:
+            self.material_mappings = self.db.get_material_mappings(self.project_id)
+        else:
+            self.material_mappings = load_data(self.material_mappings_file)
+        
+        # Validate the retrieved data as before
+        self.validate_data()        
         self.processing_start_time = time.time()
 
     def validate_data(self):
