@@ -205,3 +205,4 @@ Desktop.ini
 *.duckdb-shm
 *.duckdb-wal
 
+nhmzh_data.duckdb.wal

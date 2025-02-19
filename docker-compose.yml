@@ -78,6 +78,8 @@ services:
       - minio1
     networks:
       - ${NETWORK_NAME}
+    ports:
+      - "5000:5000"
 
 networks:
   nhm-network:

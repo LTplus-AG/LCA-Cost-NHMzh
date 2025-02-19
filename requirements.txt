@@ -14,8 +14,24 @@ requests>=2.31.0
 # Utilities
 python-dotenv>=1.0.0
 
+#flask
+flask>=3.0.0
+#flask_cors
+flask_cors
+
+#fastapi
+fastapi
+
+#uvicorn
+uvicorn
+
+#openpyxl
 openpyxl
+
+#joblib
 joblib
+
+#minio
 minio
 pydantic
 pyarrow

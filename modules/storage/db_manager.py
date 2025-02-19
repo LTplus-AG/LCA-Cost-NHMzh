@@ -5,6 +5,9 @@ import logging
 from pathlib import Path
 from datetime import date, datetime
 
+# Hardcoded project ID for demo purposes
+DEFAULT_PROJECT_ID = "juch-areal"
+
 class DatabaseManager:
     def __init__(self, db_path: str = "nhmzh_data.duckdb"):
         """Initialize database connection and tables"""
@@ -838,4 +841,104 @@ class DatabaseManager:
             except Exception:
                 pass
             raise
+
+    def get_ifc_results(self, project_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get IFC results for a project, including elements and material mappings"""
+        project_id = project_id or DEFAULT_PROJECT_ID
+        conn = self.conn
+        
+        try:
+            # First ensure tables exist
+            self._init_db()
+            
+            # Get IFC elements and their materials with volumes
+            result = conn.execute("""
+                WITH material_volumes AS (
+                    SELECT 
+                        m.material_name,
+                        SUM(m.volume) as total_volume
+                    FROM ifc_element_materials m
+                    JOIN ifc_elements e ON m.element_id = e.id
+                    WHERE e.project_id = ?
+                    GROUP BY m.material_name
+                )
+                SELECT 
+                    material_name as name,
+                    total_volume as volume
+                FROM material_volumes
+                ORDER BY total_volume DESC
+            """, [project_id])
+            
+            # Convert result to list of dictionaries
+            materials = []
+            for row in result.fetchall():
+                materials.append({
+                    "name": row[0],
+                    "volume": float(row[1]) if row[1] is not None else 0.0
+                })
+            
+            # Get material mappings
+            mappings = {}
+            mapping_result = conn.execute("""
+                SELECT ifc_material, kbob_id 
+                FROM material_mappings
+                WHERE ifc_material IN (
+                    SELECT DISTINCT material_name 
+                    FROM ifc_element_materials m
+                    JOIN ifc_elements e ON m.element_id = e.id
+                    WHERE e.project_id = ?
+                )
+            """, [project_id])
+            
+            for row in mapping_result.fetchall():
+                if row[0] and row[1]:  # Only include if both values are non-null
+                    mappings[row[0]] = row[1]
+            
+            return {
+                'projectId': project_id,
+                'ifcData': {
+                    'materials': materials
+                },
+                'materialMappings': mappings
+            }
+            
+        except Exception as e:
+            logging.error(f"Error getting IFC results: {str(e)}")
+            # Return empty result with valid structure
+            return {
+                'projectId': project_id,
+                'ifcData': {
+                    'materials': []
+                },
+                'materialMappings': {}
+            }
+
+    def update_material_mappings(self, project_id: Optional[str] = None, material_mappings: Dict[str, str] = None) -> None:
+        """Update material mappings for a project"""
+        if material_mappings is None:
+            material_mappings = {}
+            
+        project_id = project_id or DEFAULT_PROJECT_ID
+        conn = self.conn
+        
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            
+            # Delete existing mappings for the project
+            conn.execute("""
+                DELETE FROM material_mappings 
+                WHERE project_id = ?
+            """, [project_id])
+            
+            # Insert new mappings
+            for element_id, kbob_material_id in material_mappings.items():
+                conn.execute("""
+                    INSERT INTO material_mappings (project_id, element_id, kbob_material_id)
+                    VALUES (?, ?, ?)
+                """, [project_id, element_id, kbob_material_id])
+            
+            conn.execute("COMMIT")
+        except Exception as e:
+            conn.execute("ROLLBACK")
+            raise e
 

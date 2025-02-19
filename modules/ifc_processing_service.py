@@ -7,7 +7,7 @@ import uuid
 import logging
 import requests
 import json
-from modules.storage.db_manager import DatabaseManager
+from modules.storage.db_manager import DatabaseManager, DEFAULT_PROJECT_ID
 from minio import Minio
 import io
 from typing import Optional, Dict, Any
@@ -38,7 +38,7 @@ class IFCExtractBuildingElementsService:
         self.api_endpoint = api_endpoint
         self.db = db
         logging.info(f"Using database file: {os.path.abspath(db.db_path)}")
-        self.project_id = project_id or str(uuid.uuid4())
+        self.project_id = project_id or DEFAULT_PROJECT_ID
         self.project_name = project_name or f"IFC Building Elements Project {self.project_id}"
         self.query_params = query_params or {}
         self.callback_config = callback_config

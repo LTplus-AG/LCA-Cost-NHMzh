@@ -1,13 +1,13 @@
 import os
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import time
 import uuid
 import pandas as pd
 
 
 from modules.base_processor import BaseProcessor
-from modules.storage.db_manager import DatabaseManager
+from modules.storage.db_manager import DatabaseManager, DEFAULT_PROJECT_ID
 from utils.shared_utils import validate_columns, validate_value, ensure_output_directory, save_data_to_json
 
 class CostProcessor(BaseProcessor):
@@ -16,7 +16,7 @@ class CostProcessor(BaseProcessor):
         super().__init__(input_file_path, output_file, minio_config)
         self.data_file_path = data_file_path
         self.db = db
-        self.project_id = project_id or str(uuid.uuid4())
+        self.project_id = project_id or DEFAULT_PROJECT_ID
         self.project_name = project_name or f"Cost Project {self.project_id}"
         self.processing_start_time = None
     

@@ -8,7 +8,7 @@ import time
 import uuid
 
 from modules.base_processor import BaseProcessor
-from modules.storage.db_manager import DatabaseManager
+from modules.storage.db_manager import DatabaseManager, DEFAULT_PROJECT_ID
 from utils.shared_utils import load_data, validate_columns, validate_value, ensure_output_directory, save_data_to_json
 
 
@@ -17,9 +17,10 @@ class LCAProcessor(BaseProcessor):
         self.material_mappings_file = material_mappings_file
         super().__init__(input_file_path, material_mappings_file)
         self.db = db
-        self.project_id = project_id or str(uuid.uuid4())
+        self.project_id = project_id or DEFAULT_PROJECT_ID
         self.project_name = project_name or f"LCA Project {self.project_id}"
         self.processing_start_time = None
+        self.results = []
 
     def load_data(self):
         # Get active KBOB version from the database

@@ -4,17 +4,33 @@ import os
 import time
 from confluent_kafka import Consumer, Producer
 from typing import Optional, Dict, Any
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 from modules.ifc_processing_service import IFCExtractBuildingElementsService
 from modules.cost_processor import CostProcessor
 from modules.lca_processor import LCAProcessor
-from modules.storage.db_manager import DatabaseManager
+from modules.storage.db_manager import DatabaseManager, DEFAULT_PROJECT_ID
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+app = Flask(__name__)
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://172.22.0.5:5173"  # Docker network URL
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 class Orchestrator:
     def __init__(self):
@@ -29,6 +45,9 @@ class Orchestrator:
             'https://openbim-service-production.up.railway.app/api/ifc/extract-building-elements')
         self.db_path = os.getenv('DB_PATH', '/app/data/nhmzh_data.duckdb')
         
+        # Initialize database
+        self.db = DatabaseManager(self.db_path)
+        
         # Initialize Kafka consumer and producer
         self.consumer = Consumer({
             'bootstrap.servers': self.kafka_broker,
@@ -39,9 +58,6 @@ class Orchestrator:
         self.producer = Producer({
             'bootstrap.servers': self.kafka_broker
         })
-        
-        # Initialize database
-        self.db = DatabaseManager(self.db_path)
         
         # Subscribe to input topic
         self.consumer.subscribe([self.input_topic])
@@ -55,17 +71,17 @@ class Orchestrator:
                 ifc_url=ifc_url,
                 api_endpoint=self.ifc_api_endpoint,
                 db=self.db,
-                project_name=project_name
+                project_name=project_name,
+                project_id=DEFAULT_PROJECT_ID
             )
             ifc_service.run()
-            project_id = ifc_service.project_id
             
             # Step 2: Run LCA Processing
             lca_processor = LCAProcessor(
                 input_file_path=None,  # Data loaded from DB
                 material_mappings_file=None,  # Mappings in DB
                 db=self.db,
-                project_id=project_id
+                project_id=DEFAULT_PROJECT_ID
             )
             lca_processor.run()
             
@@ -75,7 +91,7 @@ class Orchestrator:
                 data_file_path=None,  # Cost data in DB
                 output_file=None,  # Results stored in DB
                 db=self.db,
-                project_id=project_id
+                project_id=DEFAULT_PROJECT_ID
             )
             cost_processor.run()
             
@@ -87,7 +103,7 @@ class Orchestrator:
                 'materialMappings': getattr(lca_processor, 'material_mappings', {})
             }
             
-            return project_id
+            return DEFAULT_PROJECT_ID
             
         except Exception as e:
             logging.exception("Error processing IFC file")
@@ -150,6 +166,64 @@ class Orchestrator:
             self.consumer.close()
             self.db.close()
 
+# Create orchestrator instance
+orchestrator = Orchestrator()
+
+@app.route('/api/ifc-results/<project_id>', methods=['GET'])
+def get_ifc_results(project_id):
+    """Get IFC results including materials and mappings for a project."""
+    try:
+        logging.info(f"Received request for IFC results for project: {project_id}")
+        logging.info(f"Database path: {orchestrator.db.db_path}")
+        logging.info(f"Database connection status: {orchestrator.db.conn is not None}")
+        
+        # Check if project exists
+        project_info = orchestrator.db.get_project_info(project_id)
+        logging.info(f"Project info: {json.dumps(project_info, indent=2) if project_info else 'Not found'}")
+        
+        results = orchestrator.db.get_ifc_results(project_id)
+        logging.info(f"Retrieved results from database: {json.dumps(results, indent=2)}")
+        
+        if not results.get('ifcData', {}).get('materials'):
+            logging.warning(f"No materials found for project {project_id}")
+            
+        return jsonify(results)
+    except Exception as e:
+        logging.error(f"Error getting IFC results: {str(e)}", exc_info=True)
+        default_response = {
+            'projectId': project_id,
+            'ifcData': { 'materials': [] },
+            'materialMappings': {}
+        }
+        logging.info(f"Returning default response: {json.dumps(default_response, indent=2)}")
+        return jsonify(default_response)
+
+@app.route('/api/update-material-mappings', methods=['POST'])
+def update_material_mappings():
+    """Update material mappings for a project."""
+    try:
+        data = request.json
+        logging.info(f"Received material mappings update request: {json.dumps(data, indent=2)}")
+        project_id = data.get('projectId')
+        material_mappings = data.get('materialMappings', {})
+        
+        orchestrator.db.update_material_mappings(
+            project_id=project_id,
+            material_mappings=material_mappings
+        )
+        
+        response = {'message': 'Material mappings updated successfully'}
+        logging.info("Material mappings updated successfully")
+        return jsonify(response)
+    except Exception as e:
+        error_msg = f"Error updating material mappings: {str(e)}"
+        logging.error(error_msg)
+        return jsonify({'error': error_msg}), 500
+
 if __name__ == '__main__':
-    orchestrator = Orchestrator()
-    orchestrator.run() 
+    # Enable debug mode but disable auto-reloader to prevent database lock conflicts
+    app.debug = True
+    app.config['DEBUG'] = True
+    app.config['USE_RELOADER'] = False
+    # Run Flask app on all interfaces
+    app.run(host='0.0.0.0', port=5000, use_reloader=False, threaded=True) 
