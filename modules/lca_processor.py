@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import re
@@ -13,12 +13,9 @@ from utils.shared_utils import load_data, validate_columns, validate_value, ensu
 
 
 class LCAProcessor(BaseProcessor):
-    def __init__(self, input_file_path, material_mappings_file, 
-                 db_path="nhmzh_data.duckdb", output_file=None, minio_config=None,
-                 project_id=None, project_name=None):
-        super().__init__(input_file_path, output_file, minio_config)
-        self.material_mappings_file = material_mappings_file
-        self.db = DatabaseManager(db_path)
+    def __init__(self, input_file_path, material_mappings_file, db, project_id: Optional[str] = None, project_name: Optional[str] = None):
+        super().__init__(input_file_path, material_mappings_file)
+        self.db = db
         self.project_id = project_id or str(uuid.uuid4())
         self.project_name = project_name or f"LCA Project {self.project_id}"
         self.processing_start_time = None

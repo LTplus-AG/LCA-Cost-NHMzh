@@ -8,43 +8,73 @@ import logging
 import requests
 import json
 from modules.storage.db_manager import DatabaseManager
+from minio import Minio
+import io
+from typing import Optional, Dict, Any
 
 class IFCExtractBuildingElementsService:
     def __init__(self,
                  ifc_url: str,
                  api_endpoint: str,
-                 db_path: str = "data/nhmzh_data.duckdb",
+                 db: DatabaseManager,
                  project_name: str = None,
-                 query_params: dict = None,
-                 callback_config: dict = None):
+                 query_params: Optional[Dict[str, Any]] = None,
+                 callback_config: Optional[Dict[str, Any]] = None,
+                 project_id: Optional[str] = None):
         """
         Args:
             ifc_url (str): Public URL to fetch the IFC file.
             api_endpoint (str): URL of the OpenBIM IFC extract API endpoint (e.g., 
                                 "https://openbim-service-production.up.railway.app/api/ifc/extract-building-elements").
-            db_path (str): Path to the DuckDB database.
+            db (DatabaseManager): Shared database instance.
             project_name (str): Optional project name.
             query_params (dict): Optional query parameters for filtering/pagination.
             callback_config (dict): Optional callback configuration. If provided,
                                     the API will return immediately with a task ID and
                                     use the callback URL to send progress and final data.
+            project_id (str): Optional project ID.
         """
         self.ifc_url = ifc_url
         self.api_endpoint = api_endpoint
-        self.db = DatabaseManager(db_path)
-        logging.info(f"Using database file: {os.path.abspath(db_path)}")
-        self.project_id = str(uuid.uuid4())
+        self.db = db
+        logging.info(f"Using database file: {os.path.abspath(db.db_path)}")
+        self.project_id = project_id or str(uuid.uuid4())
         self.project_name = project_name or f"IFC Building Elements Project {self.project_id}"
         self.query_params = query_params or {}
         self.callback_config = callback_config
-        logging.basicConfig(level=logging.INFO)
+        
+        # Initialize MinIO client
+        self.minio_client = Minio(
+            endpoint=os.getenv('MINIO_ENDPOINT', 'minio1:9000'),
+            access_key=os.getenv('MINIO_ACCESS_KEY', 'minioadmin'),
+            secret_key=os.getenv('MINIO_SECRET_KEY', 'minioadmin'),
+            secure=False  # Set to True if using HTTPS
+        )
 
     def fetch_ifc(self) -> bytes:
-        """Fetch the IFC file from the provided public URL."""
-        logging.info(f"Fetching IFC file from {self.ifc_url}")
-        response = requests.get(self.ifc_url, stream=True)
-        response.raise_for_status()
-        return response.content
+        """Fetch the IFC file from MinIO."""
+        try:
+            # Parse the bucket and object path from the URL
+            # URL format: http://minio1:9001/ifc-files/02_BIMcollab_Example_STR.ifc
+            path_parts = self.ifc_url.split('/')
+            bucket_name = path_parts[-2]  # 'ifc-files'
+            object_name = path_parts[-1]  # '02_BIMcollab_Example_STR.ifc'
+            
+            logging.info(f"Fetching IFC file from MinIO - Bucket: {bucket_name}, Object: {object_name}")
+            
+            # Get the object data
+            response = self.minio_client.get_object(bucket_name, object_name)
+            
+            # Read all data into memory
+            ifc_data = response.read()
+            response.close()
+            response.release_conn()
+            
+            return ifc_data
+            
+        except Exception as e:
+            logging.error(f"Error fetching IFC file from MinIO: {str(e)}")
+            raise
 
     def send_to_api(self, ifc_data: bytes) -> dict:
         """
@@ -60,7 +90,7 @@ class IFCExtractBuildingElementsService:
             # The API expects callback_config as a JSON string.
             data["callback_config"] = json.dumps(self.callback_config)
         
-        # Convert boolean values in query_params to lowercase strings: "true" or "false"
+        # Convert boolean values in query_params to lowercase strings
         processed_params = {
             k: ("true" if v is True else "false" if v is False else v)
             for k, v in self.query_params.items()
@@ -99,29 +129,26 @@ class IFCExtractBuildingElementsService:
     def run(self):
         """
         Executes the entire workflow:
-         - Fetches the IFC file
+         - Fetches the IFC file from MinIO
          - Sends it to the extraction API
-         - Processes the response:
-             • If callback_config was provided and a task ID is returned, it handles async processing.
-             • Otherwise, it stores the returned elements immediately.
+         - Processes the response
         """
         try:
-            # 1. Retrieve IFC file from the public URL.
+            # Fetch the IFC file from MinIO
             ifc_data = self.fetch_ifc()
             
-            # 2. Send the file along with any query parameters / callback configuration.
+            # Send to API and get response
             result = self.send_to_api(ifc_data)
             
-            # 3. Determine if the API returned a task ID (async processing) or full data (synchronous).
             if self.callback_config and "task_id" in result:
                 logging.info(f"Asynchronous processing initiated. Task ID: {result['task_id']}")
-                # In asynchronous mode, further results will be pushed to the callback URL.
                 return result
             else:
-                logging.info("Synchronous processing completed. Storing data into the database.")
+                logging.info("Synchronous processing completed.")
                 self.store_data(result)
                 logging.info(f"IFC extraction stored successfully. Project ID: {self.project_id}")
                 return result
+                
         except Exception as e:
             logging.error(f"Error during IFC extraction: {e}")
             raise
@@ -160,6 +187,7 @@ if __name__ == "__main__":
     service = IFCExtractBuildingElementsService(
         ifc_url=IFC_URL,
         api_endpoint=API_ENDPOINT,
+        db=DatabaseManager("data/nhmzh_data.duckdb"),
         query_params=query_params,
         callback_config=None  # or callback_config if async processing is desired.
     )

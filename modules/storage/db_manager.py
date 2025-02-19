@@ -542,15 +542,23 @@ class DatabaseManager:
             raise
 
     def init_project(self, project_id: str, name: str, kbob_version: str, life_expectancy: int = 60) -> None:
-        """Initialize a new project in the database."""
+        """Initialize a new project in the database or update if it exists."""
         try:
-            self.conn.execute("""
-                INSERT INTO projects (
-                    project_id, name, life_expectancy, kbob_version, 
-                    created_at, status
-                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 'active')
-            """, [project_id, name, life_expectancy, kbob_version])
-            logging.info(f"Initialized project {project_id} in database")
+            self.conn.execute(
+                """
+                INSERT INTO projects (project_id, name, life_expectancy, kbob_version, status)
+                VALUES (?, ?, ?, ?, 'active')
+                ON CONFLICT(project_id) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    life_expectancy = EXCLUDED.life_expectancy,
+                    kbob_version = EXCLUDED.kbob_version,
+                    updated_at = now(),
+                    status = 'active'
+                """,
+                [project_id, name, life_expectancy, kbob_version]
+            )
+            self.conn.commit()
+            logging.info(f"Upserted project {project_id} successfully")
         except Exception as e:
             logging.error(f"Failed to initialize project: {e}")
             raise

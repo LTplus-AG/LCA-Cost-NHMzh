@@ -10,11 +10,10 @@ from utils.shared_utils import validate_columns, validate_value
 
 class CostProcessor(BaseProcessor):
     def __init__(self, input_file_path, data_file_path, output_file, 
-                 db_path="nhmzh_data.duckdb", minio_config=None,
-                 project_id=None, project_name=None):
+                 db, minio_config=None, project_id=None, project_name=None):
         super().__init__(input_file_path, output_file, minio_config)
         self.data_file_path = data_file_path
-        self.db = DatabaseManager(db_path)
+        self.db = db
         self.project_id = project_id or str(uuid.uuid4())
         self.project_name = project_name or f"Cost Project {self.project_id}"
         self.processing_start_time = None
