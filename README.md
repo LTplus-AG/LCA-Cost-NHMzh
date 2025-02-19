@@ -10,7 +10,7 @@ _Mock-Up aus früher Projektphase, stellt nicht das endgültige Ergebnis dar._
 > [!NOTE]
 > Für detaillierte Informationen zur Verwendung der Skripte, siehe die [README.md im scripts Verzeichnis](scripts/README.md).
 
-## Verzeichnisstruktur
+### 📊 Eingabedaten
 
 ### 📁 NHMzh-modules/data/
 
@@ -20,23 +20,52 @@ Enthält Eingabedaten und generierte Ausgabedateien.
 
 Rohdaten:
 
-- `control_file.xlsx`
-- `KBOB.csv`
-- `CostDB.csv`
-- `amortization_periods.csv`
+- Haupteingabedatei mit IFC-Elementen und deren Materialien
+- KBOB Materialdaten für LCA-Berechnungen (Umgebungsvariable: `KBOB_DATA_PATH`)
+  - UUID-Nummer
+  - Treibhausgasemissionen [kg CO2-eq]
+  - Primärenergie nicht erneuerbar [kWh oil-eq]
+  - UBP (Total)
+  - BAUMATERIALIEN (Name)
+  - Rohdichte/Flächenmasse
+- Kostenkennwerte für Kostenberechnungen (Umgebungsvariable: `COST_DB_PATH`)
+  - Code (eBKP-H)
+  - Bezeichnung
+  - Kennwert
+  - reference (Einheit)
+- Lebensdauer-Daten für Bauteile (Umgebungsvariable: `AMORTIZATION_PERIODS_PATH`)
+  - eBKP-H Code
+  - Description
+  - Years
+  - model-based?
 
 #### 📤 data/output/
 
 Generierte Ergebnisdaten:
 
-- `lca_results.json`
-- `cost_results.json`
-- `combined_results.json`
-- `summary_report.txt`
+- `nhmzh_data.duckdb` - DuckDB Datenbank mit allen Daten:
 
-#### 🔍 data/output/qa/
+  - Referenzdaten (KBOB, Lebensdauer, Kosten)
+  - Projektdaten (IFC-Elemente, Materialien)
+  - Verarbeitungsergebnisse
+  - Fehlerprotokolle und Historie
 
-Kontrolldaten zur Überprüfung der Resultate etc.
+- Exportierte Daten (optional):
+
+  - `kbob_materials.json` - KBOB Materialdaten
+  - `life_expectancy.json` - Lebensdauer-Daten
+  - `material_mappings.json` - Material-Mappings
+  - Pro Projekt:
+    - `project_{id}/project.json` - Projektinformationen
+    - `project_{id}/ifc_elements.json` - IFC-Elemente
+    - `project_{id}/element_materials.json` - Materialzuweisungen
+    - `project_{id}/processing_results.json` - Berechnungsergebnisse
+    - `project_{id}/processing_errors.json` - Fehlerprotokolle
+    - `project_{id}/processing_history.json` - Verarbeitungshistorie
+
+- MinIO Export (optional):
+  - `/lca/{project_id}/{filename}_{timestamp}.parquet` - LCA-Berechnungsergebnisse
+  - `/cost/{project_id}/{filename}_{timestamp}.parquet` - Kostenberechnungsergebnisse
 
 ### 📦 [modules/](modules/)
 
@@ -49,19 +78,28 @@ Spezifische Module zur Ausführung von Berechnungen:
 
 ### 🛠️ [scripts/](scripts/)
 
-Enthält Skripte, um die Module zu starten:
+Enthält Skripte für Datenmanagement und Verarbeitung:
 
-- [`run_processors.py`](scripts/run_processors.py): Hauptskript, das `LCAProcessor` und `CostProcessor` ausführt
-- [`dataset_gen.py`](scripts/dataset_gen.py): Skript zur Generierung grosser Testdatensätze
-- [`profiler.py`](scripts/profiler.py): Skript zur Leistungsanalyse der Module
-- [`generate_summary.py`](scripts/generate_summary.py): Skript zur Erstellung von Zusammenfassungsberichten
-- [`README.md`](scripts/README.md): Detaillierte Dokumentation
+- [`duckDB_import_export.py`](scripts/duckDB_import_export.py): Verwaltung der DuckDB-Datenbank und Referenzdaten
+  - Laden von KBOB, Lebensdauer und Kostendaten
+  - Import/Export von Projektdaten
+  - Datenbank-Backup und -Wiederherstellung
+- [`run_processors.py`](scripts/run_processors.py): Hauptskript für LCA- und Kostenberechnungen
+  - Verarbeitung von IFC-Elementen
+  - Berechnung von Umweltindikatoren und Kosten
+  - Export nach DuckDB und optional MinIO
+- [`dataset_gen.py`](scripts/dataset_gen.py): Generierung von Testdatensätzen
+- [`profiler.py`](scripts/profiler.py): Leistungsanalyse der Module
+- [`generate_summary.py`](scripts/generate_summary.py): Erstellung von Zusammenfassungsberichten
 
 ### ⚙️ [utils/](utils/)
 
 Hilfsfunktionen zur Unterstützung der Module:
 
-- [`shared_utils.py`](utils/shared_utils.py): Allgemeine Hilfsfunktionen wie `load_data()`, `save_data_to_json()`, etc.
+- [`shared_utils.py`](utils/shared_utils.py): Allgemeine Hilfsfunktionen
+  - Datei-I/O Operationen
+  - Datenvalidierung
+  - Fehlerbehandlung
 
 ## Module
 
@@ -69,15 +107,30 @@ Hilfsfunktionen zur Unterstützung der Module:
 
 ### [`LCAProcessor`](modules/lca_processor.py)
 
-Berechnet der Ökobilanz (LCA) für Bauteile und Bauteilschichten.
+Berechnet die Ökobilanz (LCA) für Bauteile und Bauteilschichten:
+
+- Verarbeitung von IFC-Elementen und Materialien
+- Integration mit KBOB-Daten und Lebensdauer-Informationen
+- Berechnung von CO2-Äquivalenten, Primärenergie und UBP
+- Speicherung in DuckDB und optionaler Export als Parquet
 
 ### [`CostProcessor`](modules/cost_processor.py)
 
-Berechnet die prognostizierten Kosten für Bauprojekte.
+Berechnet die prognostizierten Kosten für Bauprojekte:
+
+- Verarbeitung von IFC-Elementen und eBKP-H Codes
+- Integration mit Kostenkennwerten
+- Mengenermittlung und Kostenberechnung
+- Speicherung in DuckDB und optionaler Export als Parquet
 
 ### [`BaseProcessor`](modules/base_processor.py)
 
-Ist eine abstrakte Basisklasse, die die gemeinsame Struktur für alle Module bereitstellt.
+Abstrakte Basisklasse für die Prozessoren:
+
+- Gemeinsame Datenbankfunktionalität
+- Standardisierte Fehlerbehandlung
+- MinIO-Integration für Parquet-Export
+- Transaktionsmanagement
 
 ## Benutzung
 
@@ -124,7 +177,7 @@ Mountet das `data`-Verzeichnis vom Host-System in den Container. So kann der Con
 
 ## MinIO Integration
 
-Die MinIO-Integration wird über ein Konfigurations-Dictionary gesteuert:
+Die MinIO-Integration ist optional und wird für den Export der DuckDB-Ergebnisse im Parquet-Format verwendet. Diese Ergebnisse werden direkt vom PowerBI-Dashboard verarbeitet.
 
 ```python
 minio_config = {
@@ -138,7 +191,7 @@ minio_config = {
 
 ### 📥 Verwendung mit Docker
 
-1. MinIO-Konfiguration als Umgebungsvariablen setzen:
+MinIO-Konfiguration als Umgebungsvariablen setzen:
 
 ```bash
 docker run --rm \
@@ -146,4 +199,52 @@ docker run --rm \
   -e MINIO_ACCESS_KEY="your_access_key" \
   -e MINIO_SECRET_KEY="your_secret_key" \
   -e MINIO_BUCKET="your-bucket-name" \
+  -v ${PWD}/data:/app/data nhmzh-modules control_file.xlsx
 ```
+
+Die Berechnungsergebnisse werden in der DuckDB-Datenbank gespeichert und können optional als Parquet-Dateien nach MinIO exportiert werden. Die Parquet-Dateien sind optimiert für die Weiterverarbeitung im PowerBI-Dashboard.
+
+## Datenbank
+
+Das Projekt verwendet DuckDB als eingebettete Datenbank für die effiziente Verwaltung aller Daten. Die Implementierung bietet folgende Hauptfunktionen:
+
+### 📊 Datenmodell
+
+#### Referenzdaten
+
+- **KBOB Materialien**: Versionierte Materialdaten mit Umweltindikatoren
+- **Lebensdauer**: eBKP-H basierte Amortisationsperioden
+- **Kostenkennwerte**: Versionierte Kostendaten pro eBKP-H Code
+
+#### Projektdaten
+
+- **Projekte**: Verwaltung von Projektmetadaten und Status
+- **IFC-Elemente**: Detaillierte Bauteilinformationen
+- **Materialzuweisungen**: Verknüpfung von IFC-Elementen mit Materialien
+- **Verarbeitungsergebnisse**: LCA- und Kostenberechnungen
+- **Fehlerprotokolle**: Detaillierte Fehlererfassung
+- **Verarbeitungshistorie**: Tracking von Berechnungsprozessen
+
+### 🔄 Datenbank-Management
+
+Die Verwaltung erfolgt über das Skript `duckdb_import_export.py`, das folgende Hauptfunktionen bietet:
+
+```bash
+# Laden aller Referenzdaten
+python scripts/duckDB_import_export.py load-all --version "2024-v1"
+
+# Spezifische Daten laden
+python scripts/duckDB_import_export.py load-kbob kbob_data.csv "2024-v1"
+python scripts/duckDB_import_export.py load-life amortization_periods.csv
+python scripts/duckDB_import_export.py load-mappings material_mappings.json
+
+# Daten exportieren/importieren
+python scripts/duckDB_import_export.py export output_dir/
+python scripts/duckDB_import_export.py import input_dir/
+```
+
+### 🔄 Integration
+
+- **MinIO-Export**: Optional als Parquet-Dateien
+- **PowerBI-Anbindung**: Optimierte Datenstruktur für Analysen
+- **Modulare Architektur**: Einfache Erweiterbarkeit
