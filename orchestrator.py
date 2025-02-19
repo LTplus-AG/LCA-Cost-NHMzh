@@ -79,6 +79,14 @@ class Orchestrator:
             )
             cost_processor.run()
             
+            # Prepare results JSON combining IFC extraction, LCA and Cost results
+            results_json = {
+                'ifcData': getattr(ifc_service, 'result', {}),
+                'lcaResults': getattr(lca_processor, 'results', {}),
+                'costResults': getattr(cost_processor, 'results', {}),
+                'materialMappings': getattr(lca_processor, 'material_mappings', {})
+            }
+            
             return project_id
             
         except Exception as e:

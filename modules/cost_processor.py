@@ -1,8 +1,10 @@
+import os
 import logging
 from typing import Any, Dict, List
 import time
 import uuid
 import pandas as pd
+
 
 from modules.base_processor import BaseProcessor
 from modules.storage.db_manager import DatabaseManager
@@ -31,13 +33,31 @@ class CostProcessor(BaseProcessor):
         
         # Load IFC element data. If no file was provided, load from the database.
         if self.input_file_path is None:
-            # Assuming get_ifc_elements returns a list of dictionaries
+            # Load data from the database
             elements = self.db.get_ifc_elements(self.project_id)
-            if not elements:
-                raise ValueError(f"No IFC elements found in the database for project {self.project_id}")
+            for element in elements:
+                element["GUID"] = element.get("id")
+                element["Volume"] = element.get("volume_net")
+                element["Length"] = element.get("length")
+                element["Area"] = element.get("area_net")
+                element["KBOB UUID-Nummer"] = element.get("id")
+                element["eBKP-H"] = element.get("ebkp")
             self.element_data = pd.DataFrame(elements)
         else:
-            self.element_data = pd.read_csv(self.input_file_path)
+            # Load data from CSV
+            df = pd.read_csv(self.input_file_path)
+            if 'id' in df.columns:
+                df['GUID'] = df['id']
+                df['KBOB UUID-Nummer'] = df['id']
+            if 'volume_net' in df.columns:
+                df['Volume'] = df['volume_net']
+            if 'length' in df.columns:
+                df['Length'] = df['length']
+            if 'area_net' in df.columns:
+                df['Area'] = df['area_net']
+            if 'ebkp' in df.columns:
+                df['eBKP-H'] = df['ebkp']
+            self.element_data = df
         
         # Load cost data. If no file was provided, load from the database.
         if self.data_file_path is None:
@@ -96,11 +116,12 @@ class CostProcessor(BaseProcessor):
                     # Calculate total cost
                     total_cost = quantity * cost_data['Kennwert']
                     
-                    # Add successful result
+                    # Add successful result with 'material' key added
                     results.append({
                         "guid": element["GUID"],
                         "components": [{
                             "guid": element["GUID"],
+                            "material": "Cost Calculation",
                             "ebkp_h": element["eBKP-H"],
                             "total_cost": round(total_cost, 2),
                             "unit_cost": round(cost_data["Kennwert"], 2),
@@ -121,11 +142,12 @@ class CostProcessor(BaseProcessor):
                         }
                     )
                     
-                    # Add failed result
+                    # Add failed result with 'material' key added
                     results.append({
                         "guid": element["GUID"],
                         "components": [{
                             "guid": element["GUID"],
+                            "material": "Cost Calculation",
                             "ebkp_h": element["eBKP-H"],
                             "failed": True,
                             "error": str(e)
@@ -160,19 +182,19 @@ class CostProcessor(BaseProcessor):
             raise
 
     def save_results(self):
-        ensure_output_directory(os.path.dirname(self.output_file))
-        save_data_to_json(self.results, self.output_file)
-        
-        if self.minio_manager:
-            self.minio_manager.upload_file(self.output_file)
-            
+        try:
+            self.db.save_project_results(self.project_id, self.results)
+            logging.info("Results successfully saved to the database.")
+        except Exception as e:
+            logging.error("Error saving results to the database", exc_info=True)
+
         # Get and log final project info
         project_info = self.db.get_project_info(self.project_id)
         logging.info(f"Project processing completed. Status: {project_info['status']}")
         logging.info(f"Total elements: {project_info['total_elements']}")
         logging.info(f"Total errors: {project_info['total_errors']}")
-        if project_info['latest_processing']:
-            logging.info(f"Processing time: {project_info['latest_processing']['processing_time']:.2f}s")
+        if project_info.get('latest_processing'):
+            logging.info(f"Processing time: {project_info['latest_processing'].get('processing_time', 0):.2f}s")
 
     def __del__(self):
         if hasattr(self, 'db'):

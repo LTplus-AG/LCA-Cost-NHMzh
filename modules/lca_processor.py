@@ -14,6 +14,7 @@ from utils.shared_utils import load_data, validate_columns, validate_value, ensu
 
 class LCAProcessor(BaseProcessor):
     def __init__(self, input_file_path, material_mappings_file, db, project_id: Optional[str] = None, project_name: Optional[str] = None):
+        self.material_mappings_file = material_mappings_file
         super().__init__(input_file_path, material_mappings_file)
         self.db = db
         self.project_id = project_id or str(uuid.uuid4())
@@ -38,7 +39,14 @@ class LCAProcessor(BaseProcessor):
         
         # Load from the db when file paths are not provided.
         if self.input_file_path is None:
-            self.element_data = self.db.get_ifc_elements(self.project_id)
+            elements = self.db.get_ifc_elements(self.project_id)
+            # For each IFC element, fetch associated materials and their volume data from the database
+            for element in elements:
+                materials, material_volumes = self.db.get_ifc_element_materials(element["id"])
+                logging.debug(f"Element {element['id']}: fetched materials: {materials}, material_volumes: {material_volumes}")
+                element["materials"] = materials
+                element["material_volumes"] = material_volumes
+            self.element_data = { "elements": elements }
         else:
             self.element_data = load_data(self.input_file_path)
             
@@ -60,10 +68,10 @@ class LCAProcessor(BaseProcessor):
             raise ValueError("Input data must contain 'elements' key")
         
         elements = self.element_data["elements"]
+        logging.debug(f"Validating {len(elements)} IFC elements")
         if not isinstance(elements, list):
             raise ValueError("Elements must be a list")
         
-        # Check each element has minimum required fields
         valid_elements = []
         for i, element in enumerate(elements):
             try:
@@ -73,7 +81,6 @@ class LCAProcessor(BaseProcessor):
                 # Get element identifier for better error messages
                 element_id = element.get('guid') or element.get('id') or f"at index {i}"
                 
-                # Check required fields with more flexible field names
                 if not (element.get('guid') or element.get('id')):
                     raise ValueError(f"Element {element_id} missing identifier (guid or id)")
                 
@@ -82,35 +89,29 @@ class LCAProcessor(BaseProcessor):
                 material_volumes = element.get('material_volumes', {})
                 
                 if not materials:
+                    logging.debug(f"Element {element_id} materials field: {element.get('materials')}")
                     raise ValueError(f"Element {element_id} missing materials")
                 
                 has_volume = False
                 for material_name in materials:
                     material_data = material_volumes.get(material_name, {})
                     volume = material_data.get('volume')
+                    logging.debug(f"Element {element_id} - material '{material_name}' has volume: {volume}")
                     if volume is not None and volume > 0:
                         has_volume = True
                         break
                 
                 if not has_volume:
+                    logging.debug(f"Element {element_id} has materials {materials} but missing valid volume information in material_volumes: {material_volumes}")
                     raise ValueError(f"Element {element_id} missing volume information")
                 
                 valid_elements.append(element)
+                logging.debug(f"Valid element: {element_id} with materials: {materials}")
             except Exception as e:
                 logging.warning(f"Skipping invalid element: {str(e)}")
-                # Log processing error
-                if hasattr(self, 'db'):
-                    self.db.log_processing_error(
-                        project_id=self.project_id,
-                        error_data={
-                            "element_id": element_id if 'element_id' in locals() else f"at index {i}",
-                            "error_type": type(e).__name__,
-                            "error_message": str(e)
-                        }
-                    )
         
-        # Update elements list to only include valid elements
         self.element_data["elements"] = valid_elements
+        logging.debug(f"Total elements processed: {len(elements)}, valid elements: {len(valid_elements)}")
         if not valid_elements:
             raise ValueError("No valid elements found after validation")
 
@@ -259,19 +260,20 @@ class LCAProcessor(BaseProcessor):
             raise
 
     def save_results(self):
-        ensure_output_directory(os.path.dirname(self.output_file))
-        save_data_to_json(self.results, self.output_file)
-        
-        if self.minio_manager:
-            self.minio_manager.upload_file(self.output_file)
-            
+        try:
+            # Instead of writing to a file, save the processing results directly to the database
+            self.db.save_project_results(self.project_id, self.results)
+            logging.info("Results successfully saved to the database.")
+        except Exception as e:
+            logging.error("Error saving results to the database", exc_info=True)
+
         # Get and log final project info
         project_info = self.db.get_project_info(self.project_id)
         logging.info(f"Project processing completed. Status: {project_info['status']}")
         logging.info(f"Total elements: {project_info['total_elements']}")
         logging.info(f"Total errors: {project_info['total_errors']}")
-        if project_info['latest_processing']:
-            logging.info(f"Processing time: {project_info['latest_processing']['processing_time']:.2f}s")
+        if project_info.get('latest_processing'):
+            logging.info(f"Processing time: {project_info['latest_processing'].get('processing_time', 0):.2f}s")
 
     def __del__(self):
         if hasattr(self, 'db'):

@@ -401,85 +401,108 @@ class DatabaseManager:
             raise
 
     def store_ifc_elements(self, elements: List[Dict[str, Any]], project_id: str) -> None:
-        """Store IFC elements in the database."""
+        conn = self.conn
+        # First transaction: insert/update IFC elements without using ON CONFLICT clause
         try:
-            conn = self.conn
-            conn.execute("BEGIN TRANSACTION")
-            
             logging.info(f"About to insert {len(elements)} IFC elements into table 'ifc_elements' for project {project_id} using database file: {self.db_path}")
-            
+            conn.execute("BEGIN TRANSACTION")
             for element in elements:
-                # Retrieve element identifier; fallback to 'guid' if 'id' is missing
                 element_id = element.get('id') or element.get('guid')
                 if not element_id:
                     continue
-
-                # Extract quantity and dimension values with defaults if missing
                 quantities = element.get('quantities', {})
                 volume_data = quantities.get('volume', {})
                 volume_net = volume_data.get('net')
                 volume_gross = volume_data.get('gross')
-
                 dimensions = quantities.get('dimensions', {})
                 length = dimensions.get('length')
                 width = dimensions.get('width')
                 height = dimensions.get('height')
-
                 area_data = quantities.get('area', {})
                 area_net = area_data.get('net')
                 area_gross = area_data.get('gross')
-
-                # Support both snake_case and camelCase keys for boolean properties
                 load_bearing = element.get('load_bearing') if element.get('load_bearing') is not None else element.get('properties', {}).get('loadBearing')
                 is_external = element.get('is_external') if element.get('is_external') is not None else element.get('properties', {}).get('isExternal')
-
-                # Retrieve the ebkp (or reference) property
                 ebkp = element.get('properties', {}).get('ebkp') or element.get('properties', {}).get('reference')
-
-                # Insert the IFC element using all the specified columns:
-                # AZ id, A-Z ifc class, A-Z object_type, (Z] load_bearing, is_external,
-                # A-Z ebkp, 123 volume net, 123 volume_gross, 123 area net, 123 area_gross,
-                # 123 length, 123 width, 123 height, A-Z project_id, timestamp.
-                conn.execute("""
-                    INSERT INTO ifc_elements (
-                        id,              -- AZ id
-                        ifc_class,       -- A-Z ifc class
-                        object_type,     -- A-Z object_type
-                        load_bearing,    -- (Z] load_bearing
-                        is_external,     -- is_external
-                        ebkp,            -- A-Z ebkp
-                        volume_net,      -- 123 volume net
-                        volume_gross,    -- 123 volume_gross
-                        area_net,        -- 123 area net
-                        area_gross,      -- 123 area_gross
-                        length,          -- 123 length
-                        width,           -- 123 width
-                        height,          -- 123 height
-                        project_id,      -- A-Z project_id
-                        timestamp        -- timestamp (CURRENT_TIMESTAMP)
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                """, [
-                    element_id,
-                    element.get('ifc_class', 'Unknown'),
-                    element.get('object_type'),
-                    load_bearing,
-                    is_external,
-                    ebkp,
-                    volume_net,
-                    volume_gross,
-                    area_net,
-                    area_gross,
-                    length,
-                    width,
-                    height,
-                    project_id
-                ])
                 
+                # Check if the element already exists
+                existing = conn.execute("SELECT 1 FROM ifc_elements WHERE id = ?", [element_id]).fetchone()
+                if existing:
+                    conn.execute("""UPDATE ifc_elements SET
+                        ifc_class = ?,
+                        object_type = ?,
+                        load_bearing = ?,
+                        is_external = ?,
+                        ebkp = ?,
+                        volume_net = ?,
+                        volume_gross = ?,
+                        area_net = ?,
+                        area_gross = ?,
+                        length = ?,
+                        width = ?,
+                        height = ?,
+                        timestamp = now()
+                        WHERE id = ?
+                    """, [
+                        element.get('ifc_class', 'Unknown'),
+                        element.get('object_type'),
+                        load_bearing,
+                        is_external,
+                        ebkp,
+                        volume_net,
+                        volume_gross,
+                        area_net,
+                        area_gross,
+                        length,
+                        width,
+                        height,
+                        element_id
+                    ])
+                else:
+                    conn.execute("""INSERT INTO ifc_elements (
+                        id, ifc_class, object_type, load_bearing, is_external, ebkp,
+                        volume_net, volume_gross, area_net, area_gross, length, width, height, project_id, timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+                    """, [
+                        element_id,
+                        element.get('ifc_class', 'Unknown'),
+                        element.get('object_type'),
+                        load_bearing,
+                        is_external,
+                        ebkp,
+                        volume_net,
+                        volume_gross,
+                        area_net,
+                        area_gross,
+                        length,
+                        width,
+                        height,
+                        project_id
+                    ])
+            conn.execute("COMMIT")
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+
+        # Second transaction: insert materials for each IFC element
+        try:
+            conn.execute("BEGIN TRANSACTION")
+            for element in elements:
+                element_id = element.get('id') or element.get('guid')
+                if not element_id:
+                    continue
                 for material_name, material_data in element.get('material_volumes', {}).items():
-                    conn.execute("""
-                        INSERT INTO ifc_element_materials (
-                            element_id, material_name, fraction, volume, width, density
-                        ) VALUES (?, ?, ?, ?, ?, ?)
+                    conn.execute("""INSERT INTO ifc_element_materials (
+                        element_id, material_name, fraction, volume, width, density
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (element_id, material_name) DO UPDATE SET
+                        fraction = EXCLUDED.fraction,
+                        volume = EXCLUDED.volume,
+                        width = EXCLUDED.width,
+                        density = EXCLUDED.density
                     """, [
                         element_id,
                         material_name,
@@ -488,13 +511,12 @@ class DatabaseManager:
                         material_data.get('width'),
                         material_data.get('density', 0)
                     ])
-            
             conn.execute("COMMIT")
         except Exception as e:
             try:
                 conn.execute("ROLLBACK")
             except:
-                pass  # Ignore rollback errors
+                pass
             raise
 
     def delete_ifc_element(self, element_id: str) -> None:
@@ -720,5 +742,100 @@ class DatabaseManager:
             return [dict(zip(columns, row)) for row in rows]
         except Exception as e:
             logging.error(f"Error fetching cost data for project {project_id}: {e}")
+            raise
+
+    def get_material_mappings(self, project_id: str) -> dict:
+        """Retrieve material mappings for the given project (or globally if not project-specific) from the database."""
+        try:
+            cursor = self.conn.cursor()
+            # Removed WHERE clause because project_id is not a column in material_mappings
+            query = "SELECT ifc_material, kbob_id FROM material_mappings"
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            mappings = {}
+            for row in rows:
+                # Assuming row[0] is ifc_material and row[1] is kbob_id
+                mappings[row[0]] = row[1]
+            return mappings
+        except Exception as e:
+            logging.error("Error retrieving material mappings", exc_info=True)
+            return {}
+
+    def get_ifc_element_materials(self, element_id: str) -> (List[str], Dict[str, Dict[str, float]]):
+        """Retrieve materials and their volume information for a given IFC element from the database.
+
+        Returns a tuple where the first element is a list of material names and the second element is a dictionary mapping each material to a dictionary with volume information.
+        """
+        try:
+            cursor = self.conn.execute("SELECT material_name, volume FROM ifc_element_materials WHERE element_id = ?", [element_id])
+            rows = cursor.fetchall()
+            materials = []
+            material_volumes = {}
+            for row in rows:
+                material, volume = row[0], row[1]
+                materials.append(material)
+                material_volumes[material] = {"volume": volume}
+            return materials, material_volumes
+        except Exception as e:
+            logging.error(f"Error fetching materials for element {element_id}: {e}")
+            return [], {}
+
+    def save_project_results(self, project_id: str, results: List[Dict[str, Any]]) -> None:
+        """Save processing results to the processing_results table."""
+        try:
+            conn = self.conn
+            conn.execute("BEGIN TRANSACTION")
+            for result in results:
+                element_id = result.get("guid")
+                components = result.get("components", [])
+                for component in components:
+                    material_name = component.get("material")
+                    # For successful components, use the provided 'mat_kbob'; otherwise, None
+                    kbob_uuid = component.get("mat_kbob") if not component.get("failed") else ""
+                    # Use active KBOB version if not provided in the result
+                    kbob_version = component.get("kbob_version") if component.get("kbob_version") is not None else self.get_active_kbob_version()
+                    volume = component.get("volume")
+                    density = component.get("density")
+                    gwp_absolute = component.get("gwp_absolute")
+                    gwp_relative = component.get("gwp_relative")
+                    penr_absolute = component.get("penr_absolute")
+                    penr_relative = component.get("penr_relative")
+                    ubp_absolute = component.get("ubp_absolute")
+                    ubp_relative = component.get("ubp_relative")
+                    amortization = component.get("amortization")
+                    ebkp_h = component.get("ebkp_h")
+                    failed = component.get("failed", True)
+                    error_msg = component.get("error") if failed else None
+
+                    conn.execute("""INSERT INTO processing_results (
+                        element_id, material_name, kbob_uuid, kbob_version, volume, density,
+                        gwp_absolute, gwp_relative, penr_absolute, penr_relative,
+                        ubp_absolute, ubp_relative, amortization, ebkp_h, failed, error, project_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, [
+                        element_id,
+                        material_name,
+                        kbob_uuid,
+                        kbob_version,
+                        volume,
+                        density,
+                        gwp_absolute,
+                        gwp_relative,
+                        penr_absolute,
+                        penr_relative,
+                        ubp_absolute,
+                        ubp_relative,
+                        amortization,
+                        ebkp_h,
+                        failed,
+                        error_msg,
+                        project_id
+                    ])
+            conn.execute("COMMIT")
+        except Exception as e:
+            try:
+                conn.execute("ROLLBACK")
+            except Exception:
+                pass
             raise
 
