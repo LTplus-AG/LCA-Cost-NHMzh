@@ -134,8 +134,8 @@ class DatabaseManager:
                 );
 
                 CREATE TABLE IF NOT EXISTS material_mappings (
+                    project_id VARCHAR NOT NULL,
                     ifc_material VARCHAR NOT NULL,
-                    kbob_material VARCHAR,
                     kbob_id VARCHAR,
                     kbob_version VARCHAR NOT NULL,
                     type VARCHAR,
@@ -143,7 +143,7 @@ class DatabaseManager:
                     ebkp VARCHAR,
                     quantity DOUBLE,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(ifc_material, kbob_id, kbob_version)
+                    UNIQUE(project_id, ifc_material, kbob_id, kbob_version)
                 );
 
                 -- Processing Tables
@@ -747,13 +747,15 @@ class DatabaseManager:
             logging.error(f"Error fetching cost data for project {project_id}: {e}")
             raise
 
-    def get_material_mappings(self, project_id: str) -> dict:
+    def get_material_mappings(self, project_id: Optional[str] = None) -> dict:
         """Retrieve material mappings for the given project (or globally if not project-specific) from the database."""
+        project_id = project_id or DEFAULT_PROJECT_ID
         try:
             cursor = self.conn.cursor()
-            # Removed WHERE clause because project_id is not a column in material_mappings
-            query = "SELECT ifc_material, kbob_id FROM material_mappings"
-            cursor.execute(query)
+            query = """
+                SELECT ifc_material, kbob_id FROM material_mappings WHERE project_id = ?
+            """
+            cursor.execute(query, [project_id])
             rows = cursor.fetchall()
             mappings = {}
             for row in rows:
@@ -931,14 +933,28 @@ class DatabaseManager:
             """, [project_id])
             
             # Insert new mappings
-            for element_id, kbob_material_id in material_mappings.items():
+            active_kbob_version = self.get_active_kbob_version()
+            for ifc_material, kbob_id in material_mappings.items():
                 conn.execute("""
-                    INSERT INTO material_mappings (project_id, element_id, kbob_material_id)
-                    VALUES (?, ?, ?)
-                """, [project_id, element_id, kbob_material_id])
+                    INSERT INTO material_mappings (
+                        project_id, 
+                        ifc_material, 
+                        kbob_id, 
+                        kbob_version,
+                        is_modelled,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, [
+                    project_id,
+                    ifc_material,
+                    kbob_id,
+                    active_kbob_version,
+                    True
+                ])
             
             conn.execute("COMMIT")
         except Exception as e:
             conn.execute("ROLLBACK")
+            logging.error(f"Error updating material mappings: {str(e)}")
             raise e
 

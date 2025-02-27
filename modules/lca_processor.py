@@ -28,36 +28,23 @@ class LCAProcessor(BaseProcessor):
         if not active_version:
             raise ValueError("No active KBOB version found in database")
         
-        # Upsert project record
-        self.db.init_project(
-            project_id=self.project_id,
-            name=self.project_name,
-            kbob_version=active_version
-        )
-        
-        # Update project status to processing
-        self.db.update_project_status(self.project_id, "processing")
-        
-        # Load from the db when file paths are not provided.
+        # Load from the db when file paths are not provided
         if self.input_file_path is None:
             elements = self.db.get_ifc_elements(self.project_id)
-            # For each IFC element, fetch associated materials and their volume data from the database
+            # For each IFC element, fetch associated materials and their volume data
             for element in elements:
                 materials, material_volumes = self.db.get_ifc_element_materials(element["id"])
-                logging.debug(f"Element {element['id']}: fetched materials: {materials}, material_volumes: {material_volumes}")
                 element["materials"] = materials
                 element["material_volumes"] = material_volumes
             self.element_data = { "elements": elements }
         else:
             self.element_data = load_data(self.input_file_path)
-            
-        if self.material_mappings_file is None:
-            self.material_mappings = self.db.get_material_mappings(self.project_id)
-        else:
-            self.material_mappings = load_data(self.material_mappings_file)
         
-        # Validate the retrieved data as before
-        self.validate_data()        
+        # Load material mappings from database
+        self.material_mappings = self.db.get_material_mappings(self.project_id)
+        
+        # Validate the retrieved data
+        self.validate_data()
         self.processing_start_time = time.time()
 
     def validate_data(self):
