@@ -44,7 +44,7 @@ jobs:
         run: cp .env.example .env
 
       - name: Start MinIO for testing
-        run: docker-compose up -d minio1
+        run: docker compose up -d minio1
 
       - name: Wait for MinIO to start
         run: sleep 10
@@ -96,8 +96,8 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
             cd ${{ secrets.DEPLOY_PATH }}
-            docker-compose pull
-            docker-compose up -d
+            docker compose pull
+            docker compose up -d
 
       - name: Notify deployment success
         if: success()
