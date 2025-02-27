@@ -204,23 +204,46 @@ def update_material_mappings():
     try:
         data = request.json
         logging.info(f"Received material mappings update request: {json.dumps(data, indent=2)}")
+        
         project_id = data.get('projectId')
         material_mappings = data.get('materialMappings', {})
         
+        if not project_id:
+            return jsonify({'error': 'Project ID is required'}), 400
+            
         orchestrator.db.update_material_mappings(
             project_id=project_id,
             material_mappings=material_mappings
         )
         
-        response = {'message': 'Material mappings updated successfully'}
+        # Trigger LCA recalculation with new mappings
+        lca_processor = LCAProcessor(
+            input_file_path=None,  # Data loaded from DB
+            material_mappings_file=None,  # Mappings in DB
+            db=orchestrator.db,
+            project_id=project_id
+        )
+        lca_processor.run()
+        
+        response = {
+            'message': 'Material mappings updated and LCA recalculated successfully',
+            'projectId': project_id
+        }
         logging.info("Material mappings updated successfully")
         return jsonify(response)
+        
     except Exception as e:
         error_msg = f"Error updating material mappings: {str(e)}"
-        logging.error(error_msg)
+        logging.error(error_msg, exc_info=True)
         return jsonify({'error': error_msg}), 500
 
 if __name__ == '__main__':
+    from threading import Thread
+
+    # Start orchestrator consumer loop in a separate thread.
+    consumer_thread = Thread(target=orchestrator.run, daemon=True)
+    consumer_thread.start()
+
     # Enable debug mode but disable auto-reloader to prevent database lock conflicts
     app.debug = True
     app.config['DEBUG'] = True
