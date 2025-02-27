@@ -10,6 +10,17 @@ _Mock-Up aus früher Projektphase, stellt nicht das endgültige Ergebnis dar._
 > [!NOTE]
 > Für detaillierte Informationen zur Verwendung der Skripte, siehe die [README.md im scripts Verzeichnis](scripts/README.md).
 
+## 🚀 CI/CD Pipeline
+
+Das Projekt verwendet eine automatisierte CI/CD-Pipeline, die folgende Prozesse abdeckt:
+
+1. **Build**: Automatisches Erstellen des Docker-Images bei jedem Push in den `main`, `master` oder `develop` Branch
+2. **Test**: Ausführung aller Unit-Tests im Docker-Container
+3. **Deploy**: Automatisches Deployment des Docker-Images in die Produktionsumgebung bei erfolgreichen Tests
+4. **Benachrichtigung**: Slack-Benachrichtigungen über den Status des Build- und Deployment-Prozesses
+
+Für detaillierte Informationen zur Einrichtung der CI/CD-Pipeline, siehe [CI-CD-SETUP.md](CI-CD-SETUP.md).
+
 ### 📊 Eingabedaten
 
 ### 📁 NHMzh-modules/data/
