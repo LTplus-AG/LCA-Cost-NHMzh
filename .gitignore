@@ -206,3 +206,4 @@ Desktop.ini
 *.duckdb-wal
 
 nhmzh_data.duckdb.wal
+scripts/ebkp.md
