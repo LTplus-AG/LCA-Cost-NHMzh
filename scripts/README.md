@@ -97,7 +97,7 @@ python run_processors.py <Pfad_zur_Eingabedatei>
 Generator für Testdatensätze. Erstellt realistische Daten für Tests.
 
 - Generierung realistischer Testszenarien
-- Anpassbare Datensatzgrößen
+- Anpassbare Datensatzgrössen
 - Strukturierte CSV-Ausgabe
 - Integrierte Validierung
 
